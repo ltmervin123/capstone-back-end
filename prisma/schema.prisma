@@ -10,13 +10,40 @@ datasource db {
   provider = "postgresql"
 }
 
-// Sample User model - modify as needed for your application
+enum Role {
+  ADMIN
+  HR
+  EMPLOYEE
+}
+
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String         @id @default(cuid())
+  username      String         @unique
+  email         String         @unique
+  passwordHash  String
+  role          Role           @default(EMPLOYEE)
+  isActive      Boolean        @default(true)
+  isApproved    Boolean        @default(false)
+  permissions   Json?
+  employeeId    String?        @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  refreshTokens RefreshToken[]
 
   @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+  userAgent String?
+  ipAddress String?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
 }

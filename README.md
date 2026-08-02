@@ -56,11 +56,15 @@ This will:
 
 ### 4. Seed the Database (Optional)
 
-Populate the database with sample data:
+Populate the database with demo auth users (admin, HR, employee, and one pending approval):
 
 ```bash
-pnpm db:seed
+pnpm db:seed          # Re-seed demo users
+pnpm db:studio        # Browse data visually
+pnpm prisma db seed   # Same as db:seed (Prisma CLI)
 ```
+
+Demo credentials match the frontend seed data. Passwords are stored hashed in the database.
 
 ### 5. Start the Development Server
 
@@ -75,8 +79,9 @@ pnpm dev
 - `pnpm db:generate` - Generate Prisma Client
 - `pnpm db:migrate` - Create and apply migrations
 - `pnpm db:push` - Push schema changes without creating migrations (for prototyping)
-- `pnpm db:studio` - Open Prisma Studio (visual database editor)
-- `pnpm db:seed` - Seed the database with sample data
+- `pnpm db:studio` - Browse data visually (Prisma Studio)
+- `pnpm db:seed` - Re-seed demo users
+- `pnpm prisma db seed` - Same as `db:seed` (Prisma CLI)
 
 ### Docker Commands
 

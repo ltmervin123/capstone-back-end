@@ -1,21 +1,34 @@
 import express, { Request, Response } from 'express';
-import 'dotenv/config';
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import { env } from './config/env.js';
 import { checkDatabaseConnection, disconnectDatabase } from './lib/prisma.js';
+import { errorHandler } from './middleware/errorHandler.js';
+import { apiLimiter } from './middleware/rateLimiter.js';
+import apiRoutes from './routes/index.js';
 
 const app = express();
-const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.set('trust proxy', 1);
+
+app.use(
+  cors({
+    origin: env.FRONTEND_URL,
+    credentials: true,
+  }),
+);
+app.use(cookieParser());
 app.use(express.json());
+app.use('/api', apiLimiter, apiRoutes);
 
-app.get('/', (req: Request, res: Response): void => {
+app.get('/', (_req: Request, res: Response): void => {
   res.send('Backend is running!');
 });
 
+app.use(errorHandler);
+
 async function startServer(): Promise<void> {
   try {
-    // Check database connection before starting the server
     const isDbConnected = await checkDatabaseConnection();
 
     if (!isDbConnected) {
@@ -23,12 +36,10 @@ async function startServer(): Promise<void> {
       process.exit(1);
     }
 
-    // Start the Express server
-    app.listen(PORT, (): void => {
-      console.log(`Server running on port ${PORT}`);
+    app.listen(env.PORT, (): void => {
+      console.log(`Server running on port ${env.PORT}`);
     });
 
-    // Handle graceful shutdown
     process.on('SIGINT', async () => {
       console.log('\nShutting down gracefully...');
       await disconnectDatabase();
