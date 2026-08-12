@@ -1,23 +1,6 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import multer from 'multer';
 import type { Request, RequestHandler } from 'express';
 import { AppError } from '../errors/AppError.js';
-import { ensureDir, STAGING_ROOT, uniqueFileName } from '../utils/fileStorage.js';
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    try {
-      ensureDir(STAGING_ROOT);
-      cb(null, STAGING_ROOT);
-    } catch (error) {
-      cb(error as Error, STAGING_ROOT);
-    }
-  },
-  filename: (_req, file, cb) => {
-    cb(null, uniqueFileName(file.originalname));
-  },
-});
 
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -27,8 +10,9 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
 ]);
 
+/** Keep files in memory only — never write to local disk. */
 export const employeeUpload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024,
     files: 40,
@@ -48,32 +32,11 @@ export const employeeCreateUpload: RequestHandler = employeeUpload.fields([
 ]);
 
 /**
- * Removes staged multer files that were never persisted.
- * Safe after success: moved files are already gone from staging paths.
+ * No-op: memory uploads have no local files to clean.
+ * Kept so errorHandler call sites stay stable.
  */
-export async function cleanupStagedUploads(req: Request): Promise<void> {
-  const files = req.files;
-  if (!files || typeof files !== 'object' || Array.isArray(files)) {
-    return;
-  }
-
-  const stagingRoot = path.resolve(STAGING_ROOT);
-  const uploaded = Object.values(files).flat();
-
-  await Promise.all(
-    uploaded.map(async (file) => {
-      if (!file?.path) return;
-      const resolved = path.resolve(file.path);
-      if (!resolved.startsWith(stagingRoot)) {
-        return;
-      }
-      try {
-        await fs.promises.unlink(resolved);
-      } catch {
-        // Ignore missing/already-moved files
-      }
-    }),
-  );
+export async function cleanupStagedUploads(_req: Request): Promise<void> {
+  // Memory storage — nothing on disk
 }
 
 /** @deprecated Use cleanupStagedUploads */

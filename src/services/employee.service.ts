@@ -1,16 +1,16 @@
-import path from 'node:path';
 import type { Express } from 'express';
 import { EmployeeStatus, Sex } from '../generated/prisma/index.js';
 import { AppError } from '../errors/AppError.js';
 import * as employeeRepository from '../repositories/employee.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
 import {
-  employeeDocumentDir,
-  employeeProfileDir,
-  persistStagedFile,
-  removePaths,
-  toPublicAssetUrl,
-} from '../utils/fileStorage.js';
+  destroyCloudinaryUploads,
+  employeeDocumentCloudFolder,
+  employeeProfileCloudFolder,
+  uploadBufferToCloudinary,
+  type CloudinaryUploadResult,
+} from '../utils/cloudinaryStorage.js';
+import { toPublicAssetUrl } from '../utils/fileStorage.js';
 import type {
   CreateEmployeeInput,
   DocumentLabelInput,
@@ -160,7 +160,7 @@ export async function createEmployee(params: {
   ipAddress?: string;
 }) {
   const { input, documentLabels, files, actorUserId, ipAddress } = params;
-  const persistedAbsolutePaths: string[] = [];
+  const uploadedCloudAssets: CloudinaryUploadResult[] = [];
 
   const actor = await userRepository.findById(actorUserId);
   if (!actor) {
@@ -227,14 +227,16 @@ export async function createEmployee(params: {
     let profilePictureUrl: string | null = null;
 
     if (profileFile) {
-      const profileDir = employeeProfileDir(input.employeeNumber);
-      const saved = await persistStagedFile({
-        stagedPath: profileFile.path,
-        destinationDir: profileDir,
+      if (!profileFile.buffer?.length) {
+        throw new AppError(400, 'Profile picture upload is empty', 'INVALID_FILE');
+      }
+      const uploaded = await uploadBufferToCloudinary({
+        buffer: profileFile.buffer,
+        folder: employeeProfileCloudFolder(input.employeeNumber),
         originalName: profileFile.originalname,
       });
-      persistedAbsolutePaths.push(path.join(profileDir, saved.storedFileName));
-      profilePictureUrl = saved.relativePath;
+      uploadedCloudAssets.push(uploaded);
+      profilePictureUrl = uploaded.url;
     }
 
     const documents: Array<{
@@ -258,18 +260,21 @@ export async function createEmployee(params: {
         );
       }
 
-      const destDir = employeeDocumentDir(input.employeeNumber, label.categoryId);
-      const saved = await persistStagedFile({
-        stagedPath: file.path,
-        destinationDir: destDir,
+      if (!file.buffer?.length) {
+        throw new AppError(400, 'Document upload is empty', 'INVALID_FILE');
+      }
+
+      const uploaded = await uploadBufferToCloudinary({
+        buffer: file.buffer,
+        folder: employeeDocumentCloudFolder(input.employeeNumber, label.categoryId),
         originalName: file.originalname,
       });
-      persistedAbsolutePaths.push(path.join(destDir, saved.storedFileName));
+      uploadedCloudAssets.push(uploaded);
 
       documents.push({
         documentTypeId: documentType.id,
         fileName: file.originalname,
-        filePath: saved.relativePath,
+        filePath: uploaded.url,
         mimeType: file.mimetype,
         fileSizeBytes: file.size,
         uploadedById: actorUserId,
@@ -328,7 +333,7 @@ export async function createEmployee(params: {
 
     return toFrontendEmployee(created);
   } catch (error) {
-    await removePaths(persistedAbsolutePaths);
+    await destroyCloudinaryUploads(uploadedCloudAssets);
     throw error;
   }
 }

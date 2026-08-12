@@ -10,7 +10,7 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ): void {
-  // Only remove staged temp uploads on failure — persisted employee assets are kept.
+  // Memory uploads — no local files; kept for API compatibility.
   void cleanupStagedUploads(req);
 
   if (error instanceof MulterError) {
