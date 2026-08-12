@@ -1,3 +1,4 @@
+import path from 'node:path';
 import express, { Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
@@ -6,6 +7,7 @@ import { checkDatabaseConnection, disconnectDatabase } from './lib/prisma.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import apiRoutes from './routes/index.js';
+import { ASSETS_ROOT, ensureDir } from './utils/fileStorage.js';
 
 const app = express();
 
@@ -19,6 +21,10 @@ app.use(
 );
 app.use(cookieParser());
 app.use(express.json());
+
+ensureDir(ASSETS_ROOT);
+app.use('/api/assets', express.static(ASSETS_ROOT));
+
 app.use('/api', apiLimiter, apiRoutes);
 
 app.get('/', (_req: Request, res: Response): void => {

@@ -28,3 +28,7 @@ dist-ssr
 *.sw?
 
 /src/generated/prisma
+
+# Uploaded employee files (local disk storage; do not commit binaries)
+/assets/**/*
+!/assets/.gitkeep

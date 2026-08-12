@@ -1,13 +1,33 @@
 import type { NextFunction, Request, Response } from 'express';
+import { MulterError } from 'multer';
 import { ZodError } from 'zod';
 import { AppError } from '../errors/AppError.js';
+import { cleanupStagedUploads } from './upload.middleware.js';
 
 export function errorHandler(
   error: unknown,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction,
 ): void {
+  // Only remove staged temp uploads on failure — persisted employee assets are kept.
+  void cleanupStagedUploads(req);
+
+  if (error instanceof MulterError) {
+    const message =
+      error.code === 'LIMIT_FILE_SIZE'
+        ? 'File too large. Maximum size is 5MB per file.'
+        : error.message;
+    res.status(400).json({
+      success: false,
+      error: {
+        message,
+        code: 'UPLOAD_ERROR',
+      },
+    });
+    return;
+  }
+
   if (error instanceof AppError) {
     res.status(error.statusCode).json({
       success: false,
