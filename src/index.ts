@@ -37,6 +37,10 @@ async function startServer(): Promise<void> {
       process.exit(1);
     }
 
+    const { provisionEmployeeLogins } = await import('./services/employee.service.js');
+    await provisionEmployeeLogins();
+    console.log('✓ Employee login accounts provisioned');
+
     app.listen(env.PORT, (): void => {
       console.log(`Server running on port ${env.PORT}`);
     });

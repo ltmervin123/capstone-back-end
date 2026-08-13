@@ -57,7 +57,7 @@ const SEED_USERS: SeedUser[] = [
   {
     username: 'juan_delacruz',
     email: 'juan.delacruz@normi.edu.ph',
-    password: 'EmpPassword123!',
+    password: 'juan.delacruz@normi.edu.ph',
     role: Role.EMPLOYEE,
     isActive: true,
     isApproved: true,

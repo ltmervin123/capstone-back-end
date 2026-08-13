@@ -16,7 +16,7 @@ pnpm prisma db seed
 |------|----------|-------|----------|-------------|-------|
 | Admin | `admin` | admin@normi.edu.ph | `AdminPassword123!` | — | Full access to all modules |
 | HR | `hr_personnel` | hr@normi.edu.ph | `HrPassword123!` | — | Standard HR access (no payroll/reports/AI search) |
-| Employee | `juan_delacruz` | juan.delacruz@normi.edu.ph | `EmpPassword123!` | EMP001 | Employee self-service access only |
+| Employee | `juan_delacruz` | juan.delacruz@normi.edu.ph | `juan.delacruz@normi.edu.ph` | EMP001 | Employee self-service access only. Password defaults to email. |
 
 ---
 
@@ -33,7 +33,7 @@ pnpm prisma db seed
 ```
 admin / AdminPassword123!
 hr_personnel / HrPassword123!
-juan_delacruz / EmpPassword123!
+juan_delacruz / juan.delacruz@normi.edu.ph
 maria_clara / ClaraPassword123!  (pending approval — cannot log in)
 ```
 

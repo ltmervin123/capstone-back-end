@@ -1,4 +1,4 @@
-import type { Employee, EmployeeStatus, Prisma, Sex } from '../generated/prisma/index.js';
+import { Role, type Employee, type EmployeeStatus, type Prisma, type Sex } from '../generated/prisma/index.js';
 import { prisma } from '../lib/prisma.js';
 
 export type EmployeeWithDepartment = Prisma.EmployeeGetPayload<{
@@ -73,6 +73,13 @@ export async function listEmployees(): Promise<EmployeeWithDepartment[]> {
   });
 }
 
+export async function listEmployeesWithoutLogin(): Promise<Employee[]> {
+  return prisma.employee.findMany({
+    where: { user: null },
+    orderBy: [{ surname: 'asc' }, { firstName: 'asc' }],
+  });
+}
+
 export async function createEmployeeWithDocuments(params: {
   employee: {
     employeeNumber: string;
@@ -119,6 +126,12 @@ export async function createEmployeeWithDocuments(params: {
     details: string;
     ipAddress?: string;
   };
+  account: {
+    username: string;
+    email: string;
+    passwordHash: string;
+    permissions: Prisma.InputJsonValue;
+  };
 }): Promise<EmployeeWithDepartment> {
   return prisma.$transaction(async (tx) => {
     const createData: Prisma.EmployeeUncheckedCreateInput = {
@@ -152,6 +165,19 @@ export async function createEmployeeWithDocuments(params: {
     const created = await tx.employee.create({
       data: createData,
       include: employeeDetailInclude,
+    });
+
+    await tx.user.create({
+      data: {
+        username: params.account.username,
+        email: params.account.email,
+        passwordHash: params.account.passwordHash,
+        role: Role.EMPLOYEE,
+        isActive: true,
+        isApproved: true,
+        permissions: params.account.permissions,
+        employeeId: created.employeeNumber,
+      },
     });
 
     const auditData: Prisma.AuditLogUncheckedCreateInput = {

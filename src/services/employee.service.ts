@@ -3,6 +3,8 @@ import { EmployeeStatus, Sex } from '../generated/prisma/index.js';
 import { AppError } from '../errors/AppError.js';
 import * as employeeRepository from '../repositories/employee.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
+import { permissionsToJson, type UserPermissions } from '../types/auth.js';
+import { hashPassword } from '../utils/crypto.js';
 import {
   destroyCloudinaryUploads,
   destroyCloudinaryUrls,
@@ -21,6 +23,17 @@ import type {
 type UploadedFiles = {
   profilePicture?: Express.Multer.File[];
   documents?: Express.Multer.File[];
+};
+
+const DEFAULT_EMPLOYEE_PERMISSIONS: UserPermissions = {
+  dashboard: true,
+  employees: false,
+  attendance: true,
+  payroll: true,
+  leaves: true,
+  talentAcquisition: false,
+  aiSearch: false,
+  reports: false,
 };
 
 function mapSex(sex: CreateEmployeeInput['sex']): Sex {
@@ -149,7 +162,63 @@ function toFrontendEmployee(employee: Awaited<ReturnType<typeof employeeReposito
   };
 }
 
+async function ensureMissingEmployeeLogins(): Promise<void> {
+  const missing = await employeeRepository.listEmployeesWithoutLogin();
+  if (missing.length === 0) {
+    return;
+  }
+
+  const employeeNumbers = missing.map((employee) => employee.employeeNumber);
+  const emails = missing.map((employee) => employee.email);
+  const conflicts = await userRepository.listConflictingLogins({
+    emails,
+    usernames: employeeNumbers,
+    employeeIds: employeeNumbers,
+  });
+
+  const takenEmails = new Set(conflicts.map((user) => user.email));
+  const takenUsernames = new Set(conflicts.map((user) => user.username));
+  const takenEmployeeIds = new Set(
+    conflicts.map((user) => user.employeeId).filter((employeeId): employeeId is string => Boolean(employeeId)),
+  );
+
+  const permissions = permissionsToJson(DEFAULT_EMPLOYEE_PERMISSIONS);
+
+  for (const employee of missing) {
+    if (
+      takenEmails.has(employee.email) ||
+      takenUsernames.has(employee.employeeNumber) ||
+      takenEmployeeIds.has(employee.employeeNumber)
+    ) {
+      continue;
+    }
+
+    try {
+      await userRepository.createEmployeeLogin({
+        username: employee.employeeNumber,
+        email: employee.email,
+        passwordHash: await hashPassword(employee.email),
+        employeeId: employee.employeeNumber,
+        permissions,
+      });
+      takenEmails.add(employee.email);
+      takenUsernames.add(employee.employeeNumber);
+      takenEmployeeIds.add(employee.employeeNumber);
+    } catch (error) {
+      console.error(
+        `Failed to create login for employee ${employee.employeeNumber}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+}
+
+export async function provisionEmployeeLogins(): Promise<void> {
+  await ensureMissingEmployeeLogins();
+}
+
 export async function listEmployees() {
+  await ensureMissingEmployeeLogins();
   const employees = await employeeRepository.listEmployees();
   return employees.map(toFrontendEmployee);
 }
@@ -182,6 +251,33 @@ export async function createEmployee(params: {
   const existingEmail = await employeeRepository.findByEmail(input.email);
   if (existingEmail) {
     throw new AppError(409, 'Employee email already exists', 'EMPLOYEE_EMAIL_EXISTS');
+  }
+
+  const existingLogin = await userRepository.findByUsernameOrEmail(input.email);
+  if (existingLogin) {
+    throw new AppError(
+      409,
+      'A login account already uses this email',
+      'USER_EMAIL_EXISTS',
+    );
+  }
+
+  const existingUsername = await userRepository.findByUsernameOrEmail(input.employeeNumber);
+  if (existingUsername) {
+    throw new AppError(
+      409,
+      'A login account already uses this employee ID as a username',
+      'USER_USERNAME_EXISTS',
+    );
+  }
+
+  const existingLinkedAccount = await userRepository.findByEmployeeId(input.employeeNumber);
+  if (existingLinkedAccount) {
+    throw new AppError(
+      409,
+      'A login account is already linked to this employee ID',
+      'USER_EMPLOYEE_LINK_EXISTS',
+    );
   }
 
   const profileFile = files.profilePicture?.[0];
@@ -324,11 +420,17 @@ export async function createEmployee(params: {
       },
       checklistItems,
       documents,
+      account: {
+        username: input.employeeNumber,
+        email: input.email,
+        passwordHash: await hashPassword(input.email),
+        permissions: permissionsToJson(DEFAULT_EMPLOYEE_PERMISSIONS),
+      },
       audit: {
         userId: actorUserId,
         username: actor.username,
         action: 'Created employee record',
-        details: `${input.employeeNumber} — ${input.firstName} ${input.surname}`,
+        details: `${input.employeeNumber} — ${input.firstName} ${input.surname}. Login account created.`,
         ...(ipAddress ? { ipAddress } : {}),
       },
     });
