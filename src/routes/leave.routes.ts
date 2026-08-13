@@ -23,4 +23,11 @@ router.post(
   leaveController.createLeave,
 );
 
+router.delete(
+  '/:id',
+  authenticate,
+  requireRoles(Role.ADMIN, Role.HR),
+  leaveController.deleteLeave,
+);
+
 export default router;

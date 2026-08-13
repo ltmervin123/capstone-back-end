@@ -179,3 +179,38 @@ export async function createLeave(params: {
 
   return toFrontendLeave(created);
 }
+
+export async function deleteLeave(params: {
+  leaveId: string;
+  actorUserId: string;
+  ipAddress?: string;
+}) {
+  const { leaveId, actorUserId, ipAddress } = params;
+
+  const actor = await userRepository.findById(actorUserId);
+  if (!actor) {
+    throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+  }
+
+  if (actor.role !== Role.ADMIN && actor.role !== Role.HR) {
+    throw new AppError(403, 'Forbidden', 'FORBIDDEN');
+  }
+
+  const existing = await leaveRepository.findById(leaveId);
+  if (!existing) {
+    throw new AppError(404, 'Leave record not found', 'LEAVE_NOT_FOUND');
+  }
+
+  await leaveRepository.deleteLeave({
+    id: existing.id,
+    audit: {
+      userId: actorUserId,
+      username: actor.username,
+      action: 'Deleted leave record',
+      details: `${existing.employee.employeeNumber} — ${existing.employee.firstName} ${existing.employee.surname} (${LEAVE_TYPE_TO_FRONTEND[existing.leaveType]}) ${existing.startDate.toISOString().slice(0, 10)} to ${existing.endDate.toISOString().slice(0, 10)}`,
+      ...(ipAddress ? { ipAddress } : {}),
+    },
+  });
+
+  return { id: existing.id };
+}

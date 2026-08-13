@@ -59,6 +59,13 @@ export async function listEmployeeLeavesInYear(employeeId: string, year: number)
   });
 }
 
+export async function findById(id: string): Promise<LeaveWithEmployee | null> {
+  return prisma.leaveRecord.findUnique({
+    where: { id },
+    include: leaveInclude,
+  });
+}
+
 export async function createLeave(params: {
   record: {
     employeeId: string;
@@ -101,5 +108,36 @@ export async function createLeave(params: {
     });
 
     return created;
+  });
+}
+
+export async function deleteLeave(params: {
+  id: string;
+  audit: {
+    userId: string;
+    username: string;
+    action: string;
+    details: string;
+    ipAddress?: string;
+  };
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const auditData: Prisma.AuditLogUncheckedCreateInput = {
+      userId: params.audit.userId,
+      username: params.audit.username,
+      action: params.audit.action,
+      entityType: 'LeaveRecord',
+      entityId: params.id,
+      details: params.audit.details,
+      ipAddress: params.audit.ipAddress ?? null,
+    };
+
+    await tx.auditLog.create({
+      data: auditData,
+    });
+
+    await tx.leaveRecord.delete({
+      where: { id: params.id },
+    });
   });
 }
