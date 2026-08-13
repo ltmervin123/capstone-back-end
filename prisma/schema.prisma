@@ -327,10 +327,15 @@ model AttendanceRecord {
 }
 
 enum LeaveType {
-  SICK
-  VACATION
-  EMERGENCY
-  MATERNITY_PATERNITY
+  LEAVE_CREDITS
+  MATERNITY
+  VAWC
+  PATERNITY
+  SOLO_PARENT
+  STUDY
+  SPECIAL
+  AUTHORIZED_ABSENCE
+  AUTHORIZED_UNDERTIME
 }
 
 enum LeaveStatus {
@@ -345,6 +350,9 @@ model LeaveRecord {
   leaveType    LeaveType
   startDate    DateTime    @db.Date
   endDate      DateTime    @db.Date
+  numberOfDays Int
+  timeFrom     String?
+  timeTo       String?
   reason       String      @db.Text
   status       LeaveStatus @default(PENDING)
   approvedById String?
