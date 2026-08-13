@@ -23,6 +23,13 @@ router.post(
   leaveController.createLeave,
 );
 
+router.patch(
+  '/:id/reject',
+  authenticate,
+  requireRoles(Role.ADMIN, Role.HR),
+  leaveController.rejectLeave,
+);
+
 router.delete(
   '/:id',
   authenticate,

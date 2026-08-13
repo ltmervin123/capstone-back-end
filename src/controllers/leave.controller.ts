@@ -72,3 +72,34 @@ export async function deleteLeave(req: Request, res: Response, next: NextFunctio
     next(error);
   }
 }
+
+export async function rejectLeave(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    if (req.user.role !== Role.ADMIN && req.user.role !== Role.HR) {
+      throw new AppError(403, 'Forbidden', 'FORBIDDEN');
+    }
+
+    const leaveId = String(req.params.id ?? '').trim();
+    if (!leaveId) {
+      throw new AppError(400, 'Leave record ID is required', 'VALIDATION_ERROR');
+    }
+
+    const record = await leaveService.rejectLeave({
+      leaveId,
+      actorUserId: req.user.id,
+      ...(req.ip ? { ipAddress: req.ip } : {}),
+    });
+
+    res.status(200).json({
+      success: true,
+      data: { record },
+      message: 'Leave request rejected',
+    });
+  } catch (error) {
+    next(error);
+  }
+}

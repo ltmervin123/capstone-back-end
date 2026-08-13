@@ -141,3 +141,45 @@ export async function deleteLeave(params: {
     });
   });
 }
+
+export async function updateLeaveStatus(params: {
+  id: string;
+  status: LeaveStatus;
+  decidedById: string;
+  decidedAt: Date;
+  audit: {
+    userId: string;
+    username: string;
+    action: string;
+    details: string;
+    ipAddress?: string;
+  };
+}): Promise<LeaveWithEmployee> {
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.leaveRecord.update({
+      where: { id: params.id },
+      data: {
+        status: params.status,
+        approvedById: params.decidedById,
+        approvedAt: params.decidedAt,
+      },
+      include: leaveInclude,
+    });
+
+    const auditData: Prisma.AuditLogUncheckedCreateInput = {
+      userId: params.audit.userId,
+      username: params.audit.username,
+      action: params.audit.action,
+      entityType: 'LeaveRecord',
+      entityId: updated.id,
+      details: params.audit.details,
+      ipAddress: params.audit.ipAddress ?? null,
+    };
+
+    await tx.auditLog.create({
+      data: auditData,
+    });
+
+    return updated;
+  });
+}
