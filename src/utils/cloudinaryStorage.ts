@@ -73,23 +73,97 @@ export async function uploadBufferToCloudinary(params: {
   });
 }
 
+const CLOUDINARY_RESOURCE_TYPES = ['image', 'raw', 'video'] as const;
+
+function preferredResourceType(resourceType: string): (typeof CLOUDINARY_RESOURCE_TYPES)[number] {
+  if (resourceType === 'video' || resourceType === 'raw' || resourceType === 'image') {
+    return resourceType;
+  }
+  return 'image';
+}
+
+/**
+ * Derives Cloudinary public_id + resource_type from a secure_url stored in the DB.
+ * Example: https://res.cloudinary.com/{cloud}/image/upload/v123/nmc-hr/employees/EMP-001/profile/photo.jpg
+ */
+export function parseCloudinaryAssetFromUrl(
+  url: string,
+): Pick<CloudinaryUploadResult, 'publicId' | 'resourceType'> | null {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes('res.cloudinary.com') && !parsed.hostname.includes('cloudinary.com')) {
+      return null;
+    }
+
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const uploadIndex = parts.findIndex(
+      (segment) => segment === 'upload' || segment === 'authenticated' || segment === 'private',
+    );
+    if (uploadIndex < 1) {
+      return null;
+    }
+
+    const resourceType = parts[uploadIndex - 1] ?? 'image';
+    const afterUpload = parts.slice(uploadIndex + 1);
+    let start = 0;
+    while (start < afterUpload.length) {
+      const segment = afterUpload[start]!;
+      if (/^v\d+$/.test(segment)) {
+        start += 1;
+        break;
+      }
+      if (segment.includes(',') || /^(c_|w_|h_|f_|q_|fl_|t_|e_|b_|dpr_|ar_)/.test(segment)) {
+        start += 1;
+        continue;
+      }
+      break;
+    }
+
+    const publicIdWithExt = afterUpload.slice(start).join('/');
+    if (!publicIdWithExt) {
+      return null;
+    }
+
+    const publicId = publicIdWithExt.includes('.')
+      ? publicIdWithExt.replace(/\.[^/.]+$/, '')
+      : publicIdWithExt;
+
+    return { publicId, resourceType };
+  } catch {
+    return null;
+  }
+}
+
 export async function destroyCloudinaryUploads(
   uploads: Array<Pick<CloudinaryUploadResult, 'publicId' | 'resourceType'>>,
 ): Promise<void> {
   await Promise.all(
     uploads.map(async (upload) => {
-      try {
-        const resourceType =
-          upload.resourceType === 'video' || upload.resourceType === 'raw'
-            ? upload.resourceType
-            : 'image';
-        await cloudinary.uploader.destroy(upload.publicId, {
-          resource_type: resourceType,
-          invalidate: true,
-        });
-      } catch {
-        // Best-effort rollback cleanup
+      const preferred = preferredResourceType(upload.resourceType);
+      const order = [preferred, ...CLOUDINARY_RESOURCE_TYPES.filter((type) => type !== preferred)];
+
+      for (const resourceType of order) {
+        try {
+          const result = await cloudinary.uploader.destroy(upload.publicId, {
+            resource_type: resourceType,
+            invalidate: true,
+          });
+          if (result?.result === 'ok') {
+            return;
+          }
+        } catch {
+          // Try the next resource type
+        }
       }
     }),
   );
+}
+
+export async function destroyCloudinaryUrls(urls: Array<string | null | undefined>): Promise<void> {
+  const assets = urls
+    .filter((url): url is string => typeof url === 'string' && url.length > 0)
+    .map(parseCloudinaryAssetFromUrl)
+    .filter((asset): asset is NonNullable<typeof asset> => asset !== null);
+
+  await destroyCloudinaryUploads(assets);
 }

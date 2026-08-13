@@ -5,6 +5,7 @@ import * as employeeRepository from '../repositories/employee.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
 import {
   destroyCloudinaryUploads,
+  destroyCloudinaryUrls,
   employeeDocumentCloudFolder,
   employeeProfileCloudFolder,
   uploadBufferToCloudinary,
@@ -332,6 +333,277 @@ export async function createEmployee(params: {
     });
 
     return toFrontendEmployee(created);
+  } catch (error) {
+    await destroyCloudinaryUploads(uploadedCloudAssets);
+    throw error;
+  }
+}
+
+function documentsForType(
+  employee: Awaited<ReturnType<typeof employeeRepository.findByEmployeeNumberWithDetails>>,
+  documentTypeId: string,
+) {
+  return (employee?.documents ?? []).filter((doc) => doc.documentTypeId === documentTypeId);
+}
+
+export async function updateEmployee(params: {
+  employeeNumber: string;
+  input: CreateEmployeeInput;
+  documentLabels: DocumentLabelInput[];
+  removedDocuments: DocumentLabelInput[];
+  removeProfilePicture: boolean;
+  files: UploadedFiles;
+  actorUserId: string;
+  ipAddress?: string;
+}) {
+  const {
+    employeeNumber,
+    input,
+    documentLabels,
+    removedDocuments,
+    removeProfilePicture,
+    files,
+    actorUserId,
+    ipAddress,
+  } = params;
+  const uploadedCloudAssets: CloudinaryUploadResult[] = [];
+  const staleCloudinaryUrls: string[] = [];
+
+  const actor = await userRepository.findById(actorUserId);
+  if (!actor) {
+    throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+  }
+
+  const existing = await employeeRepository.findByEmployeeNumberWithDetails(employeeNumber);
+  if (!existing) {
+    throw new AppError(404, 'Employee not found', 'EMPLOYEE_NOT_FOUND');
+  }
+
+  if (input.employeeNumber !== employeeNumber) {
+    throw new AppError(400, 'Employee ID cannot be changed', 'EMPLOYEE_NUMBER_IMMUTABLE');
+  }
+
+  const department = await employeeRepository.findDepartmentByName(input.department);
+  if (!department || !department.isActive) {
+    throw new AppError(400, `Department not found: ${input.department}`, 'DEPARTMENT_NOT_FOUND');
+  }
+
+  const emailOwner = await employeeRepository.findByEmailExcludingId(input.email, existing.id);
+  if (emailOwner) {
+    throw new AppError(409, 'Employee email already exists', 'EMPLOYEE_EMAIL_EXISTS');
+  }
+
+  const profileFile = files.profilePicture?.[0];
+  const documentFiles = files.documents ?? [];
+
+  if (documentFiles.length !== documentLabels.length) {
+    throw new AppError(
+      400,
+      'Each uploaded document must include a matching label (category + item)',
+      'DOCUMENT_LABEL_MISMATCH',
+    );
+  }
+
+  const replacementKeys = new Set(
+    documentLabels.map((label) => `${label.categoryId}::${label.itemName}`),
+  );
+  const removals = removedDocuments.filter(
+    (label) => !replacementKeys.has(`${label.categoryId}::${label.itemName}`),
+  );
+
+  const checklistItems: Array<{
+    documentTypeId: string;
+    isCompleted: boolean;
+    completedById: string;
+  }> = [];
+  const seenChecklistTypes = new Set<string>();
+
+  const checklist = input.checklist;
+  for (const [categoryId, items] of Object.entries(checklist)) {
+    for (const [itemName, isChecked] of Object.entries(items)) {
+      if (!isChecked) continue;
+      const documentType = await employeeRepository.findDocumentType(categoryId, itemName);
+      if (!documentType) {
+        throw new AppError(
+          400,
+          `Unknown checklist item: ${categoryId} / ${itemName}`,
+          'INVALID_CHECKLIST_ITEM',
+        );
+      }
+      if (!seenChecklistTypes.has(documentType.id)) {
+        seenChecklistTypes.add(documentType.id);
+        checklistItems.push({
+          documentTypeId: documentType.id,
+          isCompleted: true,
+          completedById: actorUserId,
+        });
+      }
+    }
+  }
+
+  try {
+    let profilePictureUrl = existing.profilePictureUrl;
+    if (profileFile) {
+      if (!profileFile.buffer?.length) {
+        throw new AppError(400, 'Profile picture upload is empty', 'INVALID_FILE');
+      }
+      const uploaded = await uploadBufferToCloudinary({
+        buffer: profileFile.buffer,
+        folder: employeeProfileCloudFolder(employeeNumber),
+        originalName: profileFile.originalname,
+      });
+      uploadedCloudAssets.push(uploaded);
+      if (existing.profilePictureUrl) {
+        staleCloudinaryUrls.push(existing.profilePictureUrl);
+      }
+      profilePictureUrl = uploaded.url;
+    } else if (removeProfilePicture && existing.profilePictureUrl) {
+      staleCloudinaryUrls.push(existing.profilePictureUrl);
+      profilePictureUrl = null;
+    }
+
+    const documentIdsToDelete: string[] = [];
+    const documentsToCreate: Array<{
+      documentTypeId: string | null;
+      fileName: string;
+      filePath: string;
+      mimeType: string;
+      fileSizeBytes: number;
+      uploadedById: string;
+    }> = [];
+    const documentsToUpdate: Array<{
+      id: string;
+      fileName: string;
+      filePath: string;
+      mimeType: string;
+      fileSizeBytes: number;
+      uploadedById: string;
+    }> = [];
+
+    for (const label of removals) {
+      const documentType = await employeeRepository.findDocumentType(label.categoryId, label.itemName);
+      if (!documentType) {
+        throw new AppError(
+          400,
+          `Unknown document type: ${label.categoryId} / ${label.itemName}`,
+          'INVALID_DOCUMENT_TYPE',
+        );
+      }
+
+      for (const doc of documentsForType(existing, documentType.id)) {
+        documentIdsToDelete.push(doc.id);
+        staleCloudinaryUrls.push(doc.filePath);
+      }
+    }
+
+    for (let i = 0; i < documentFiles.length; i++) {
+      const file = documentFiles[i]!;
+      const label = documentLabels[i]!;
+      const documentType = await employeeRepository.findDocumentType(label.categoryId, label.itemName);
+      if (!documentType) {
+        throw new AppError(
+          400,
+          `Unknown document type: ${label.categoryId} / ${label.itemName}`,
+          'INVALID_DOCUMENT_TYPE',
+        );
+      }
+
+      if (!file.buffer?.length) {
+        throw new AppError(400, 'Document upload is empty', 'INVALID_FILE');
+      }
+
+      const uploaded = await uploadBufferToCloudinary({
+        buffer: file.buffer,
+        folder: employeeDocumentCloudFolder(employeeNumber, label.categoryId),
+        originalName: file.originalname,
+      });
+      uploadedCloudAssets.push(uploaded);
+
+      const existingDocs = documentsForType(existing, documentType.id).filter(
+        (doc) => !documentIdsToDelete.includes(doc.id),
+      );
+      const [primary, ...extras] = existingDocs;
+
+      if (primary) {
+        staleCloudinaryUrls.push(primary.filePath);
+        documentsToUpdate.push({
+          id: primary.id,
+          fileName: file.originalname,
+          filePath: uploaded.url,
+          mimeType: file.mimetype,
+          fileSizeBytes: file.size,
+          uploadedById: actorUserId,
+        });
+        for (const extra of extras) {
+          documentIdsToDelete.push(extra.id);
+          staleCloudinaryUrls.push(extra.filePath);
+        }
+      } else {
+        documentsToCreate.push({
+          documentTypeId: documentType.id,
+          fileName: file.originalname,
+          filePath: uploaded.url,
+          mimeType: file.mimetype,
+          fileSizeBytes: file.size,
+          uploadedById: actorUserId,
+        });
+      }
+
+      if (!seenChecklistTypes.has(documentType.id)) {
+        seenChecklistTypes.add(documentType.id);
+        checklistItems.push({
+          documentTypeId: documentType.id,
+          isCompleted: true,
+          completedById: actorUserId,
+        });
+      }
+    }
+
+    const updated = await employeeRepository.updateEmployeeWithDocuments({
+      employeeId: existing.id,
+      employee: {
+        surname: input.surname,
+        firstName: input.firstName,
+        middleName: input.middleName || null,
+        dateOfBirth: parseDate(input.dateOfBirth, 'date of birth'),
+        sex: mapSex(input.sex),
+        maritalStatus: input.maritalStatus,
+        religion: input.religion || null,
+        homeAddress: input.homeAddress,
+        contactNumber: input.contactNumber,
+        email: input.email,
+        profilePictureUrl,
+        departmentId: department.id,
+        position: input.position,
+        employmentDate: parseDate(input.employmentDate, 'employment date'),
+        serviceDuration: input.serviceDuration || null,
+        status: mapStatus(input.status),
+        educationLevel: input.educationLevel || null,
+        bachelorsDegree: input.bachelorsDegree || null,
+        mastersStatus: input.mastersStatus || null,
+        mastersDegreeName: input.mastersDegreeName || null,
+        doctorateStatus: input.doctorateStatus || null,
+        functionalRate: input.functionalRate,
+        gasolineAllowance: input.gasoline,
+        cashAdvanceBalance: input.cashAdvance,
+        employeeShare: input.employeeShare,
+        updatedById: actorUserId,
+      },
+      checklistItems,
+      documentsToCreate,
+      documentsToUpdate,
+      documentIdsToDelete,
+      audit: {
+        userId: actorUserId,
+        username: actor.username,
+        action: 'Updated employee record',
+        details: `${employeeNumber} — ${input.firstName} ${input.surname}`,
+        ...(ipAddress ? { ipAddress } : {}),
+      },
+    });
+
+    await destroyCloudinaryUrls(staleCloudinaryUrls);
+    return toFrontendEmployee(updated);
   } catch (error) {
     await destroyCloudinaryUploads(uploadedCloudAssets);
     throw error;

@@ -22,4 +22,12 @@ router.post(
   employeeController.createEmployee,
 );
 
+router.patch(
+  '/:employeeNumber',
+  authenticate,
+  requireRoles(Role.ADMIN, Role.HR),
+  employeeCreateUpload,
+  employeeController.updateEmployee,
+);
+
 export default router;

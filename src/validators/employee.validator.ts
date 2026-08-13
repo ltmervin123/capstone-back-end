@@ -67,5 +67,10 @@ export const documentLabelSchema = z.object({
 
 export const documentLabelsSchema = z.array(documentLabelSchema);
 
+export const updateEmployeeBodySchema = createEmployeeBodySchema;
+
+export const removedDocumentsSchema = documentLabelsSchema;
+
 export type CreateEmployeeInput = z.infer<typeof createEmployeeBodySchema>;
+export type UpdateEmployeeInput = z.infer<typeof updateEmployeeBodySchema>;
 export type DocumentLabelInput = z.infer<typeof documentLabelSchema>;
