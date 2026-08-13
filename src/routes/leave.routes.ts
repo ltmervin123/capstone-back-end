@@ -24,6 +24,13 @@ router.post(
 );
 
 router.patch(
+  '/:id/approve',
+  authenticate,
+  requireRoles(Role.ADMIN, Role.HR),
+  leaveController.approveLeave,
+);
+
+router.patch(
   '/:id/reject',
   authenticate,
   requireRoles(Role.ADMIN, Role.HR),

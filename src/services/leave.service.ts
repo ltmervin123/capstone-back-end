@@ -262,3 +262,65 @@ export async function rejectLeave(params: {
 
   return toFrontendLeave(updated);
 }
+
+export async function approveLeave(params: {
+  leaveId: string;
+  actorUserId: string;
+  ipAddress?: string;
+}) {
+  const { leaveId, actorUserId, ipAddress } = params;
+
+  const actor = await userRepository.findById(actorUserId);
+  if (!actor) {
+    throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+  }
+
+  if (actor.role !== Role.ADMIN && actor.role !== Role.HR) {
+    throw new AppError(403, 'Forbidden', 'FORBIDDEN');
+  }
+
+  const existing = await leaveRepository.findById(leaveId);
+  if (!existing) {
+    throw new AppError(404, 'Leave record not found', 'LEAVE_NOT_FOUND');
+  }
+
+  if (existing.status !== LeaveStatus.PENDING) {
+    throw new AppError(
+      409,
+      existing.status === LeaveStatus.APPROVED
+        ? 'This leave request has already been approved'
+        : 'This leave request has already been rejected',
+      'LEAVE_NOT_PENDING',
+    );
+  }
+
+  if (existing.leaveType === LeaveType.LEAVE_CREDITS) {
+    const remaining = await remainingLeaveCredits(
+      existing.employeeId,
+      existing.startDate.getUTCFullYear(),
+    );
+    if (existing.numberOfDays > remaining) {
+      throw new AppError(
+        400,
+        `Leave Limit Reached: This request needs ${existing.numberOfDays} day(s), but only ${remaining} leave credit(s) remain for this year.`,
+        'LEAVE_LIMIT_REACHED',
+      );
+    }
+  }
+
+  const updated = await leaveRepository.updateLeaveStatus({
+    id: existing.id,
+    status: LeaveStatus.APPROVED,
+    decidedById: actorUserId,
+    decidedAt: new Date(),
+    audit: {
+      userId: actorUserId,
+      username: actor.username,
+      action: 'Approved leave request',
+      details: `${existing.employee.employeeNumber} — ${existing.employee.firstName} ${existing.employee.surname} (${LEAVE_TYPE_TO_FRONTEND[existing.leaveType]}) ${existing.startDate.toISOString().slice(0, 10)} to ${existing.endDate.toISOString().slice(0, 10)}`,
+      ...(ipAddress ? { ipAddress } : {}),
+    },
+  });
+
+  return toFrontendLeave(updated);
+}
