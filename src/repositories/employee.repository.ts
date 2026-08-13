@@ -328,3 +328,38 @@ export async function updateEmployeeWithDocuments(params: {
     });
   });
 }
+
+export async function deleteEmployeeWithRelatedRecords(params: {
+  employeeId: string;
+  audit: {
+    userId: string;
+    username: string;
+    action: string;
+    details: string;
+    ipAddress?: string;
+  };
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.feedbackItem.deleteMany({
+      where: { senderEmployeeId: params.employeeId },
+    });
+
+    const auditData: Prisma.AuditLogUncheckedCreateInput = {
+      userId: params.audit.userId,
+      username: params.audit.username,
+      action: params.audit.action,
+      entityType: 'Employee',
+      entityId: params.employeeId,
+      details: params.audit.details,
+      ipAddress: params.audit.ipAddress ?? null,
+    };
+
+    await tx.auditLog.create({
+      data: auditData,
+    });
+
+    await tx.employee.delete({
+      where: { id: params.employeeId },
+    });
+  });
+}

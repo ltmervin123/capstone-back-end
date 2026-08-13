@@ -30,4 +30,11 @@ router.patch(
   employeeController.updateEmployee,
 );
 
+router.delete(
+  '/:employeeNumber',
+  authenticate,
+  requireRoles(Role.ADMIN, Role.HR),
+  employeeController.deleteEmployee,
+);
+
 export default router;

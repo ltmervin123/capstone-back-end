@@ -15,6 +15,10 @@ function employeeCloudFolder(employeeNumber: string, ...segments: string[]): str
   return ['nmc-hr', 'employees', safeId, ...safeSegments].join('/');
 }
 
+export function employeeRootCloudFolder(employeeNumber: string): string {
+  return employeeCloudFolder(employeeNumber);
+}
+
 export function employeeProfileCloudFolder(employeeNumber: string): string {
   return employeeCloudFolder(employeeNumber, 'profile');
 }
@@ -166,4 +170,31 @@ export async function destroyCloudinaryUrls(urls: Array<string | null | undefine
     .filter((asset): asset is NonNullable<typeof asset> => asset !== null);
 
   await destroyCloudinaryUploads(assets);
+}
+
+/**
+ * Best-effort wipe of every Cloudinary asset under nmc-hr/employees/{EMPLOYEE_ID}/.
+ */
+export async function destroyEmployeeCloudFolder(employeeNumber: string): Promise<void> {
+  const prefix = employeeRootCloudFolder(employeeNumber);
+
+  await Promise.all(
+    CLOUDINARY_RESOURCE_TYPES.map(async (resourceType) => {
+      try {
+        await cloudinary.api.delete_resources_by_prefix(prefix, {
+          resource_type: resourceType,
+          type: 'upload',
+          invalidate: true,
+        });
+      } catch {
+        // Best-effort folder cleanup
+      }
+    }),
+  );
+
+  try {
+    await cloudinary.api.delete_folder(prefix);
+  } catch {
+    // Nested empty folders may remain; resources are already deleted
+  }
 }

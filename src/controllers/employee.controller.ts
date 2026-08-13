@@ -180,3 +180,36 @@ export async function updateEmployee(req: Request, res: Response, next: NextFunc
     next(error);
   }
 }
+
+export async function deleteEmployee(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    if (req.user.role !== Role.ADMIN && req.user.role !== Role.HR) {
+      throw new AppError(403, 'Forbidden', 'FORBIDDEN');
+    }
+
+    const employeeNumber = String(req.params.employeeNumber ?? '')
+      .trim()
+      .toUpperCase();
+    if (!employeeNumber) {
+      throw new AppError(400, 'Employee ID is required', 'VALIDATION_ERROR');
+    }
+
+    const result = await employeeService.deleteEmployee({
+      employeeNumber,
+      actorUserId: req.user.id,
+      ...(req.ip ? { ipAddress: req.ip } : {}),
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: 'Employee deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}

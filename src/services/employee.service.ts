@@ -6,6 +6,7 @@ import * as userRepository from '../repositories/user.repository.js';
 import {
   destroyCloudinaryUploads,
   destroyCloudinaryUrls,
+  destroyEmployeeCloudFolder,
   employeeDocumentCloudFolder,
   employeeProfileCloudFolder,
   uploadBufferToCloudinary,
@@ -608,4 +609,43 @@ export async function updateEmployee(params: {
     await destroyCloudinaryUploads(uploadedCloudAssets);
     throw error;
   }
+}
+
+export async function deleteEmployee(params: {
+  employeeNumber: string;
+  actorUserId: string;
+  ipAddress?: string;
+}) {
+  const { employeeNumber, actorUserId, ipAddress } = params;
+
+  const actor = await userRepository.findById(actorUserId);
+  if (!actor) {
+    throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+  }
+
+  const existing = await employeeRepository.findByEmployeeNumberWithDetails(employeeNumber);
+  if (!existing) {
+    throw new AppError(404, 'Employee not found', 'EMPLOYEE_NOT_FOUND');
+  }
+
+  const cloudinaryUrls = [
+    existing.profilePictureUrl,
+    ...existing.documents.map((doc) => doc.filePath),
+  ];
+
+  await employeeRepository.deleteEmployeeWithRelatedRecords({
+    employeeId: existing.id,
+    audit: {
+      userId: actorUserId,
+      username: actor.username,
+      action: 'Deleted employee record',
+      details: `${existing.employeeNumber} — ${existing.firstName} ${existing.surname}`,
+      ...(ipAddress ? { ipAddress } : {}),
+    },
+  });
+
+  await destroyCloudinaryUrls(cloudinaryUrls);
+  await destroyEmployeeCloudFolder(existing.employeeNumber);
+
+  return { employeeNumber: existing.employeeNumber };
 }
