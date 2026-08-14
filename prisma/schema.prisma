@@ -450,6 +450,8 @@ model FeedbackItem {
   status           FeedbackStatus @default(NEW)
   adminResponse    String?        @db.Text
   respondedById    String?
+  employeeNotifiedAt DateTime?
+  employeeReadAt     DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
