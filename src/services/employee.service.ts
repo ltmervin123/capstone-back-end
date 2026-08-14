@@ -26,7 +26,7 @@ type UploadedFiles = {
 };
 
 const DEFAULT_EMPLOYEE_PERMISSIONS: UserPermissions = {
-  dashboard: true,
+  dashboard: false,
   employees: false,
   attendance: true,
   payroll: true,

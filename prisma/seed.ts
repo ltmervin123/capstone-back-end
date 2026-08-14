@@ -63,7 +63,7 @@ const SEED_USERS: SeedUser[] = [
     isApproved: true,
     employeeId: 'EMP001',
     permissions: {
-      dashboard: true,
+      dashboard: false,
       employees: false,
       attendance: true,
       payroll: true,

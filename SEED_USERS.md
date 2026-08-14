@@ -49,8 +49,8 @@ maria_clara / ClaraPassword123!  (pending approval — cannot log in)
 - payroll, aiSearch, reports: **disabled**
 
 ### juan_delacruz
-- dashboard, attendance, payroll, leaves: **enabled**
-- employees, talentAcquisition, aiSearch, reports: **disabled**
+- attendance, payroll, leaves: **enabled**
+- dashboard, employees, talentAcquisition, aiSearch, reports: **disabled** (dashboard is HR/Admin only)
 
 ### maria_clara
 - dashboard, employees, talentAcquisition: **enabled**
