@@ -4,7 +4,7 @@
   "main": "dist/app.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node ./scripts/copy-generated-prisma.mjs",
     "start": "tsc && node dist/index.js",
     "dev": "pnpm docker:up && pnpm db:generate && tsx watch src/index.ts",
     "dev:watch": "tsc --watch",
