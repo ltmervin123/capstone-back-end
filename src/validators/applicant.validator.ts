@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-export const APPLICANT_STATUS_VALUES = ['Applied', 'Interviewing', 'Offered', 'Rejected'] as const;
+export const APPLICANT_STATUS_VALUES = [
+  'Applied',
+  'Interviewing',
+  'Offered',
+  'Accepted/Hired',
+  'Rejected',
+] as const;
 
 const applicantFields = {
   name: z.string().trim().min(1, 'Applicant name is required').max(200),

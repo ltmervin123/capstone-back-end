@@ -12,6 +12,7 @@ const STATUS_TO_DB: Record<CreateApplicantInput['status'], ApplicantStatus> = {
   Applied: ApplicantStatus.APPLIED,
   Interviewing: ApplicantStatus.INTERVIEWING,
   Offered: ApplicantStatus.OFFERED,
+  'Accepted/Hired': ApplicantStatus.HIRED,
   Rejected: ApplicantStatus.REJECTED,
 };
 
@@ -19,6 +20,7 @@ const STATUS_TO_FRONTEND: Record<ApplicantStatus, CreateApplicantInput['status']
   [ApplicantStatus.APPLIED]: 'Applied',
   [ApplicantStatus.INTERVIEWING]: 'Interviewing',
   [ApplicantStatus.OFFERED]: 'Offered',
+  [ApplicantStatus.HIRED]: 'Accepted/Hired',
   [ApplicantStatus.REJECTED]: 'Rejected',
 };
 

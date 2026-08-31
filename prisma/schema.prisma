@@ -405,6 +405,7 @@ enum ApplicantStatus {
   APPLIED
   INTERVIEWING
   OFFERED
+  HIRED
   REJECTED
 }
 
