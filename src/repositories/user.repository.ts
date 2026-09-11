@@ -1,6 +1,27 @@
 import { Role, type Prisma, type User } from '../generated/prisma/index.js';
 import { prisma } from '../lib/prisma.js';
 
+type AuditInput = {
+  userId: string;
+  username: string;
+  action: string;
+  details: string;
+  ipAddress?: string;
+  entityId?: string;
+};
+
+function auditCreateData(audit: AuditInput): Prisma.AuditLogUncheckedCreateInput {
+  return {
+    userId: audit.userId,
+    username: audit.username,
+    action: audit.action,
+    entityType: 'User',
+    entityId: audit.entityId ?? null,
+    details: audit.details,
+    ipAddress: audit.ipAddress ?? null,
+  };
+}
+
 export async function findByUsernameOrEmail(identifier: string): Promise<User | null> {
   return prisma.user.findFirst({
     where: {
@@ -66,5 +87,84 @@ export async function createEmployeeLogin(params: {
       permissions: params.permissions,
       employeeId: params.employeeId,
     },
+  });
+}
+
+export async function listUsers(): Promise<User[]> {
+  return prisma.user.findMany({
+    orderBy: [{ createdAt: 'desc' }],
+  });
+}
+
+export async function countActiveAdmins(): Promise<number> {
+  return prisma.user.count({
+    where: {
+      role: Role.ADMIN,
+      isActive: true,
+      isApproved: true,
+    },
+  });
+}
+
+export async function createStaffUser(params: {
+  username: string;
+  email: string;
+  passwordHash: string;
+  role: Role;
+  permissions: Prisma.InputJsonValue;
+  audit: AuditInput;
+}): Promise<User> {
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: {
+        username: params.username,
+        email: params.email,
+        passwordHash: params.passwordHash,
+        role: params.role,
+        isActive: true,
+        isApproved: true,
+        permissions: params.permissions,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: auditCreateData({ ...params.audit, entityId: created.id }),
+    });
+
+    return created;
+  });
+}
+
+export async function updateUserRecord(params: {
+  id: string;
+  data: Prisma.UserUpdateInput;
+  audit: AuditInput;
+}): Promise<User> {
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: params.id },
+      data: params.data,
+    });
+
+    await tx.auditLog.create({
+      data: auditCreateData({ ...params.audit, entityId: updated.id }),
+    });
+
+    return updated;
+  });
+}
+
+export async function deleteUserRecord(params: {
+  id: string;
+  audit: AuditInput;
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.auditLog.create({
+      data: auditCreateData({ ...params.audit, entityId: params.id }),
+    });
+
+    await tx.user.delete({
+      where: { id: params.id },
+    });
   });
 }
