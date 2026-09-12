@@ -120,8 +120,9 @@ export async function getDashboardSummary(actorUserId: string) {
   const applied = dashboardRepository.applicantStatusCount(applicantStatusRows, ApplicantStatus.APPLIED);
   const interviewing = dashboardRepository.applicantStatusCount(applicantStatusRows, ApplicantStatus.INTERVIEWING);
   const offered = dashboardRepository.applicantStatusCount(applicantStatusRows, ApplicantStatus.OFFERED);
+  const hired = dashboardRepository.applicantStatusCount(applicantStatusRows, ApplicantStatus.HIRED);
   const applicantRejected = dashboardRepository.applicantStatusCount(applicantStatusRows, ApplicantStatus.REJECTED);
-  const recruitmentTotal = applied + interviewing + offered + applicantRejected;
+  const recruitmentTotal = applied + interviewing + offered + hired + applicantRejected;
 
   return {
     generatedAt: new Date().toISOString(),
@@ -174,11 +175,13 @@ export async function getDashboardSummary(actorUserId: string) {
       applied,
       interviewing,
       offered,
+      hired,
       rejected: applicantRejected,
       total: recruitmentTotal,
       appliedPct: percent(applied, recruitmentTotal),
       interviewingPct: percent(interviewing, recruitmentTotal),
       offeredPct: percent(offered, recruitmentTotal),
+      hiredPct: percent(hired, recruitmentTotal),
       rejectedPct: percent(applicantRejected, recruitmentTotal),
     },
   };
