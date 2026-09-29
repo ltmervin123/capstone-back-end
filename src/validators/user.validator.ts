@@ -28,6 +28,11 @@ export const updateUserPermissionsBodySchema = z.object({
   permissions: staffPermissionsSchema,
 });
 
+export const updateUserPasswordBodySchema = z.object({
+  password: z.string().min(6, 'Password must be at least 6 characters').max(200),
+});
+
 export type CreateStaffUserInput = z.infer<typeof createStaffUserBodySchema>;
 export type UpdateUserStatusInput = z.infer<typeof updateUserStatusBodySchema>;
 export type UpdateUserPermissionsInput = z.infer<typeof updateUserPermissionsBodySchema>;
+export type UpdateUserPasswordInput = z.infer<typeof updateUserPasswordBodySchema>;

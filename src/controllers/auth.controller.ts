@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { REFRESH_TOKEN_COOKIE } from '../config/constants.js';
 import * as authService from '../services/auth.service.js';
 import { clearAuthCookies, setAuthCookies } from '../utils/cookies.js';
-import type { LoginInput } from '../validators/auth.validator.js';
+import type { ChangePasswordInput, LoginInput } from '../validators/auth.validator.js';
 
 function getSessionMeta(req: Request) {
   const userAgent = req.get('user-agent');
@@ -92,6 +92,32 @@ export async function me(req: Request, res: Response, next: NextFunction): Promi
     res.status(200).json({
       success: true,
       data: { user },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function changePassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          message: 'Unauthorized',
+          code: 'UNAUTHORIZED',
+        },
+      });
+      return;
+    }
+
+    await authService.changePassword(userId, req.body as ChangePasswordInput);
+
+    res.status(200).json({
+      success: true,
+      data: { message: 'Password updated successfully' },
     });
   } catch (error) {
     next(error);

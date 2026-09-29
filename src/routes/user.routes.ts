@@ -6,6 +6,7 @@ import { requireRoles } from '../middleware/authorize.middleware.js';
 import { validateBody } from '../middleware/validator.js';
 import {
   createStaffUserBodySchema,
+  updateUserPasswordBodySchema,
   updateUserPermissionsBodySchema,
   updateUserStatusBodySchema,
 } from '../validators/user.validator.js';
@@ -35,6 +36,13 @@ router.patch(
   requireRoles(Role.ADMIN),
   validateBody(updateUserPermissionsBodySchema),
   userController.updateUserPermissions,
+);
+router.patch(
+  '/:id/password',
+  authenticate,
+  requireRoles(Role.ADMIN),
+  validateBody(updateUserPasswordBodySchema),
+  userController.updateUserPassword,
 );
 router.delete('/:id', authenticate, requireRoles(Role.ADMIN), userController.deleteUser);
 

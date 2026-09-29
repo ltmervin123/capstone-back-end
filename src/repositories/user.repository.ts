@@ -39,6 +39,13 @@ export async function findById(id: string): Promise<User | null> {
   });
 }
 
+export async function updatePasswordHash(id: string, passwordHash: string): Promise<User> {
+  return prisma.user.update({
+    where: { id },
+    data: { passwordHash },
+  });
+}
+
 export async function findByEmployeeId(employeeId: string): Promise<User | null> {
   return prisma.user.findUnique({
     where: { employeeId },

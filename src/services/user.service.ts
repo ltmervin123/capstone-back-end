@@ -1,6 +1,7 @@
 import { Role } from '../generated/prisma/index.js';
 import { AppError } from '../errors/AppError.js';
 import * as auditRepository from '../repositories/audit.repository.js';
+import * as refreshTokenRepository from '../repositories/refreshToken.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
 import { toAuthUser } from './auth.service.js';
 import { permissionsToJson, type UserPermissions } from '../types/auth.js';
@@ -8,6 +9,7 @@ import { hashPassword } from '../utils/crypto.js';
 import type {
   CreateStaffUserInput,
   UpdateUserPermissionsInput,
+  UpdateUserPasswordInput,
   UpdateUserStatusInput,
 } from '../validators/user.validator.js';
 
@@ -277,6 +279,44 @@ export async function updateUserPermissions(params: {
       ...(params.ipAddress ? { ipAddress: params.ipAddress } : {}),
     },
   });
+
+  return toAuthUser(updated);
+}
+
+export async function updateUserPassword(params: {
+  userId: string;
+  input: UpdateUserPasswordInput;
+  actorUserId: string;
+  ipAddress?: string;
+}) {
+  const actor = await requireAdminActor(params.actorUserId);
+  const targetId = requireUserId(params.userId);
+  const existing = await userRepository.findById(targetId);
+  if (!existing) {
+    throw new AppError(404, 'User not found', 'USER_NOT_FOUND');
+  }
+
+  if (existing.id === actor.id) {
+    throw new AppError(400, 'Use Change Password for your own account', 'CANNOT_MODIFY_SELF');
+  }
+
+  if (existing.role !== Role.HR && existing.role !== Role.EMPLOYEE) {
+    throw new AppError(400, 'Only HR and employee passwords can be reset by an administrator', 'ADMIN_PASSWORD_LOCKED');
+  }
+
+  const updated = await userRepository.updateUserRecord({
+    id: existing.id,
+    data: { passwordHash: await hashPassword(params.input.password) },
+    audit: {
+      userId: actor.id,
+      username: actor.username,
+      action: 'Reset user password',
+      details: existing.username,
+      ...(params.ipAddress ? { ipAddress: params.ipAddress } : {}),
+    },
+  });
+
+  await refreshTokenRepository.revokeAllUserRefreshTokens(existing.id);
 
   return toAuthUser(updated);
 }

@@ -5,6 +5,7 @@ import * as userService from '../services/user.service.js';
 import type {
   CreateStaffUserInput,
   UpdateUserPermissionsInput,
+  UpdateUserPasswordInput,
   UpdateUserStatusInput,
 } from '../validators/user.validator.js';
 
@@ -126,6 +127,26 @@ export async function updateUserPermissions(req: Request, res: Response, next: N
       success: true,
       data: { user },
       message: 'User permissions updated successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateUserPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const actor = requireAdminUser(req);
+    const user = await userService.updateUserPassword({
+      userId: requireTargetUserId(req),
+      input: req.body as UpdateUserPasswordInput,
+      actorUserId: actor.id,
+      ...(req.ip ? { ipAddress: req.ip } : {}),
+    });
+
+    res.status(200).json({
+      success: true,
+      data: { user },
+      message: 'User password updated successfully',
     });
   } catch (error) {
     next(error);

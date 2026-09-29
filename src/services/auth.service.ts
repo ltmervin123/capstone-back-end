@@ -8,11 +8,12 @@ import { permissionsFromJson } from '../types/auth.js';
 import {
   comparePassword,
   generateRefreshToken,
+  hashPassword,
   hashToken,
 } from '../utils/crypto.js';
 import { parseDurationToDate } from '../utils/duration.js';
 import { signAccessToken } from '../utils/jwt.js';
-import type { LoginInput } from '../validators/auth.validator.js';
+import type { ChangePasswordInput, LoginInput } from '../validators/auth.validator.js';
 
 interface SessionMeta {
   userAgent?: string;
@@ -128,6 +129,30 @@ export async function refreshSession(
   await refreshTokenRepository.revokeRefreshToken(storedToken.id);
 
   return createSession(validUser, meta);
+}
+
+export async function changePassword(userId: string, input: ChangePasswordInput): Promise<void> {
+  const user = await userRepository.findById(userId);
+
+  if (!user) {
+    throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+  }
+
+  if (!user.isActive) {
+    throw new AppError(403, 'Your account is deactivated. Contact Admin.', 'ACCOUNT_DEACTIVATED');
+  }
+
+  const currentMatches = await comparePassword(input.currentPassword, user.passwordHash);
+
+  if (!currentMatches) {
+    throw new AppError(400, 'Current password is incorrect', 'INVALID_CURRENT_PASSWORD');
+  }
+
+  if (input.currentPassword === input.newPassword) {
+    throw new AppError(400, 'New password must be different from the current password', 'PASSWORD_UNCHANGED');
+  }
+
+  await userRepository.updatePasswordHash(userId, await hashPassword(input.newPassword));
 }
 
 export async function logout(refreshToken?: string): Promise<void> {
