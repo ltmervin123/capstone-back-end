@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import aiRoutes from './ai.routes.js';
 import applicantRoutes from './applicant.routes.js';
 import attendanceRoutes from './attendance.routes.js';
 import authRoutes from './auth.routes.js';
@@ -11,6 +12,7 @@ import userRoutes from './user.routes.js';
 const router: Router = Router();
 
 router.use('/auth', authRoutes);
+router.use('/ai', aiRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/employees', employeeRoutes);
 router.use('/attendance', attendanceRoutes);
