@@ -1,8 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Response } from 'express';
 import { env } from '../config/env.js';
+import { AppError } from '../errors/AppError.js';
 import type { Prisma } from '../generated/prisma/index.js';
+import { AiMessageRole } from '../generated/prisma/index.js';
 import { prisma } from '../lib/prisma.js';
+import * as aiRepository from '../repositories/ai.repository.js';
 import { executeReadOnlyQuery } from '../utils/aiSqlRunner.js';
 
 const anthropic = new Anthropic({
@@ -117,11 +120,15 @@ POSTGRESQL SYNTAX RULES:
 
 GROUNDING & RESPONSE GUIDELINES:
 1. Base your factual answers STRICTLY on the records retrieved via \`execute_read_query\`.
-2. If the user greets or makes small talk (e.g. "Hi", "Hello"), reply politely and mention you are ready to query and analyze NMC-HR records.
-3. If the user asks for data and no records match, state clearly: "No corresponding records were found in the database."
-4. Format list or multi-column data using clean Markdown tables with bold column headers.
-5. Format currency as ₱ (Philippine Peso) when referencing salaries, allowances, or functional rates.
-6. Do NOT make up or assume records not present in the database results.
+2. COMPLETE RESPONSE MANDATE: Always synthesize and return your complete final answer in the response. When asked for employee lists, counts, or summaries (such as "How list of total employee", "show all employees", "list staff"):
+   - In a single query, retrieve the employee records (e.g. e."employeeNumber", e."firstName", e."surname", d."name" as "departmentName", e."position", e."status").
+   - Immediately output BOTH the full Markdown table of the employees AND the summary count (e.g. "Total Employees: 1").
+   - NEVER output a single transitional promise such as "Now let me get the total count of employees:" or "Let me retrieve the list:". Always output the full, verified data.
+3. If the user greets or makes small talk (e.g. "Hi", "Hello"), reply politely and mention you are ready to query and analyze NMC-HR records.
+4. If the user asks for data and no records match, state clearly: "No corresponding records were found in the database."
+5. Format list or multi-column data using clean Markdown tables with bold column headers.
+6. Format currency as ₱ (Philippine Peso) when referencing salaries, allowances, or functional rates.
+7. Do NOT make up or assume records not present in the database results.
 
 VISUAL ANALYTICS & CHARTING GUIDELINES:
 When the user asks for a chart, graph, visualization, breakdown, trend, or analytics — OR when the database results are comparative, demographic, statistical, or time-series (e.g. headcount by department, gender distribution, attendance rates, salary averages, leave usage):
@@ -160,6 +167,7 @@ export interface ChatMessageInput {
 export interface StreamChatParams {
   userId: string;
   message: string;
+  conversationId?: string | undefined;
   history?: ChatMessageInput[] | undefined;
   res: Response;
 }
@@ -168,30 +176,142 @@ function sendSseEvent(res: Response, type: string, data: Record<string, unknown>
   res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+function generateTitleFromMessage(message: string): string {
+  const cleaned = message.replace(/^[#*\-•\s\d.]+/, '').trim();
+  const firstLine = cleaned.split('\n')[0] || cleaned;
+  if (firstLine.length <= 45) {
+    return firstLine || 'New Conversation';
+  }
+  return `${firstLine.slice(0, 42).trim()}...`;
+}
+
+// ---------------------------------------------------------------------------
+// Conversation Management Services
+// ---------------------------------------------------------------------------
+
+export async function listUserConversations(userId: string) {
+  const conversations = await aiRepository.listConversationsByUserId(userId);
+  return conversations.map((c) => ({
+    id: c.id,
+    title: c.title,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+    messageCount: c._count.messages,
+    lastMessage: c.messages[0]?.content ?? null,
+  }));
+}
+
+export async function getUserConversation(id: string, userId: string) {
+  const conversation = await aiRepository.findConversationById(id, userId);
+  if (!conversation) {
+    throw new AppError(404, 'Conversation not found', 'NOT_FOUND');
+  }
+
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+    messages: conversation.messages.map((m) => ({
+      id: m.id,
+      role: m.role.toLowerCase() as 'user' | 'assistant',
+      content: m.content,
+      sourcesUsed: m.sourcesUsed,
+      createdAt: m.createdAt,
+    })),
+  };
+}
+
+export async function renameUserConversation(id: string, userId: string, title: string) {
+  const result = await aiRepository.updateConversationTitle(id, userId, title);
+  if (result.count === 0) {
+    throw new AppError(404, 'Conversation not found', 'NOT_FOUND');
+  }
+  return { id, title };
+}
+
+export async function deleteUserConversation(id: string, userId: string) {
+  const result = await aiRepository.deleteConversation(id, userId);
+  if (result.count === 0) {
+    throw new AppError(404, 'Conversation not found', 'NOT_FOUND');
+  }
+  return { success: true };
+}
+
+export async function clearAllUserConversations(userId: string) {
+  await aiRepository.deleteAllConversations(userId);
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Streaming AI Chat with Automatic Persistence
+// ---------------------------------------------------------------------------
+
 export async function streamChatWithDatabase({
   userId,
   message,
-  history = [],
+  conversationId,
+  history,
   res,
 }: StreamChatParams): Promise<void> {
   const startTime = Date.now();
   const sourcesUsed: { query: string; rowCount: number }[] = [];
   let fullAnswer = '';
+  let activeConversationId = conversationId;
 
   try {
+    // If no conversationId provided, or the conversationId doesn't exist, create a new conversation
+    if (activeConversationId) {
+      const existing = await aiRepository.findConversationById(activeConversationId, userId);
+      if (!existing) {
+        // Fallback: create fresh conversation
+        const title = generateTitleFromMessage(message);
+        const newConv = await aiRepository.createConversation({ userId, title });
+        activeConversationId = newConv.id;
+      }
+    } else {
+      const title = generateTitleFromMessage(message);
+      const newConv = await aiRepository.createConversation({ userId, title });
+      activeConversationId = newConv.id;
+    }
+
+    // Persist the user message to database
+    await aiRepository.createMessage({
+      conversationId: activeConversationId,
+      role: AiMessageRole.USER,
+      content: message,
+    });
+
+    // Notify client of the active conversation ID immediately
+    sendSseEvent(res, 'conversation', {
+      conversationId: activeConversationId,
+    });
+
     // Send initial status event
     sendSseEvent(res, 'status', { message: 'Analyzing query...' });
 
-    // Build message array for Anthropic
+    // Determine message history for Claude context window
     const formattedMessages: Anthropic.MessageParam[] = [];
 
-    // Add recent history (up to last 10 messages)
-    const recentHistory = history.slice(-10);
-    for (const h of recentHistory) {
-      if (h.role === 'user' || h.role === 'assistant') {
+    if (history && history.length > 0) {
+      const recentHistory = history.slice(-10);
+      for (const h of recentHistory) {
+        if (h.role === 'user' || h.role === 'assistant') {
+          formattedMessages.push({
+            role: h.role,
+            content: h.content,
+          });
+        }
+      }
+    } else {
+      // Pull recent messages from DB for multi-turn context (excluding the one just inserted)
+      const recentDbMessages = await aiRepository.getRecentMessages(activeConversationId, 10);
+      // The last one in recentDbMessages is the current user message, so take all but last
+      const priorMessages = recentDbMessages.slice(0, -1);
+      for (const m of priorMessages) {
         formattedMessages.push({
-          role: h.role,
-          content: h.content,
+          role: m.role === AiMessageRole.USER ? 'user' : 'assistant',
+          content: m.content,
         });
       }
     }
@@ -203,7 +323,7 @@ export async function streamChatWithDatabase({
     });
 
     // Step 1: Initial call to Claude with tool definition to check if DB query is needed
-    const initialResponse = await anthropic.messages.create({
+    let currentResponse = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2048,
       temperature: 0.1,
@@ -212,11 +332,14 @@ export async function streamChatWithDatabase({
       tools: [DB_QUERY_TOOL],
     });
 
-    const toolUseBlocks = initialResponse.content.filter(
+    let toolUseBlocks = currentResponse.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
     );
 
-    if (toolUseBlocks.length > 0) {
+    // If Claude requested tools, execute them (supports up to 2 query rounds)
+    let round = 0;
+    while (toolUseBlocks.length > 0 && round < 2) {
+      round++;
       sendSseEvent(res, 'status', {
         message:
           toolUseBlocks.length > 1
@@ -224,7 +347,6 @@ export async function streamChatWithDatabase({
             : 'Querying database records...',
       });
 
-      // Execute ALL tool use blocks and collect tool results for every tool_use_id
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const toolBlock of toolUseBlocks) {
@@ -262,10 +384,9 @@ export async function streamChatWithDatabase({
         }
       }
 
-      // Step 2: Feed tool results back to Claude and stream final answer
       formattedMessages.push({
         role: 'assistant',
-        content: initialResponse.content,
+        content: currentResponse.content,
       });
 
       formattedMessages.push({
@@ -273,6 +394,32 @@ export async function streamChatWithDatabase({
         content: toolResults,
       });
 
+      // If this was round 1, check if Claude needs a follow-up query before final synthesis
+      if (round < 2) {
+        const nextCheck = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 2048,
+          temperature: 0.1,
+          system: SYSTEM_PROMPT,
+          messages: formattedMessages,
+          tools: [DB_QUERY_TOOL],
+        });
+
+        const nextToolUse = nextCheck.content.filter(
+          (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
+        );
+
+        if (nextToolUse.length > 0) {
+          currentResponse = nextCheck;
+          toolUseBlocks = nextToolUse;
+          continue;
+        } else {
+          break;
+        }
+      }
+    }
+
+    if (round > 0) {
       sendSseEvent(res, 'status', { message: 'Synthesizing response...' });
 
       const stream = anthropic.messages.stream({
@@ -291,9 +438,9 @@ export async function streamChatWithDatabase({
       await stream.finalMessage();
     } else {
       // No tool call needed (e.g. conversational greeting or clarification)
-      const directText = initialResponse.content
-        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-        .map((b) => b.text)
+      const directText = currentResponse.content
+        .filter((b): b is Anthropic.ToolUseBlock | Anthropic.TextBlock => b.type === 'text')
+        .map((b) => (b as Anthropic.TextBlock).text)
         .join('\n');
 
       fullAnswer = directText;
@@ -301,6 +448,20 @@ export async function streamChatWithDatabase({
     }
 
     const latencyMs = Date.now() - startTime;
+
+    // Persist assistant message to database
+    try {
+      await aiRepository.createMessage({
+        conversationId: activeConversationId,
+        role: AiMessageRole.ASSISTANT,
+        content: fullAnswer,
+        ...(sourcesUsed.length > 0
+          ? { sourcesUsed: sourcesUsed as unknown as Prisma.InputJsonValue }
+          : {}),
+      });
+    } catch (saveErr) {
+      console.error('Failed to persist assistant message:', saveErr);
+    }
 
     // Record audit in ai_query_logs
     try {
@@ -319,7 +480,10 @@ export async function streamChatWithDatabase({
       console.error('Failed to write AiQueryLog:', logErr);
     }
 
-    sendSseEvent(res, 'done', { latencyMs });
+    sendSseEvent(res, 'done', {
+      latencyMs,
+      conversationId: activeConversationId,
+    });
     res.end();
   } catch (error) {
     const errorMessage =

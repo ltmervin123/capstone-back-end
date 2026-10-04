@@ -52,6 +52,7 @@ model User {
   feedbackResponded                FeedbackItem[]             @relation("FeedbackResponder")
   auditLogs                        AuditLog[]
   aiQueryLogs                      AiQueryLog[]
+  aiConversations                  AiConversation[]
 
   @@map("users")
 }
@@ -498,3 +499,43 @@ model AiQueryLog {
   @@index([createdAt])
   @@map("ai_query_logs")
 }
+
+// ---------------------------------------------------------------------------
+// AI Conversations & Messages (ChatGPT-Style History)
+// ---------------------------------------------------------------------------
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+}
+
+model AiConversation {
+  id        String        @id @default(cuid())
+  userId    String
+  title     String        @db.VarChar(255)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  AiMessage[]
+
+  @@index([userId])
+  @@index([updatedAt])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String         @id @default(cuid())
+  conversationId String
+  role           AiMessageRole
+  content        String         @db.Text
+  sourcesUsed    Json?
+  createdAt      DateTime       @default(now())
+
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@map("ai_messages")
+}
+
