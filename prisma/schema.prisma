@@ -47,6 +47,7 @@ model User {
   leavesCreated                    LeaveRecord[]              @relation("LeaveCreatedBy")
   leavesApproved                   LeaveRecord[]              @relation("LeaveApprovedBy")
   payrollProcessed                 PayrollRecord[]            @relation("PayrollProcessedBy")
+  payrollRunsProcessed             PayrollRun[]               @relation("PayrollRunProcessedBy")
   applicantsUpdated                Applicant[]                @relation("ApplicantUpdatedBy")
   feedbackSent                     FeedbackItem[]             @relation("FeedbackSender")
   feedbackResponded                FeedbackItem[]             @relation("FeedbackResponder")
@@ -371,30 +372,88 @@ model LeaveRecord {
   @@map("leave_records")
 }
 
-model PayrollRecord {
-  id              String   @id @default(cuid())
-  employeeId      String
-  month           String
-  year            Int
-  functionalRate  Decimal  @db.Decimal(12, 2)
-  daysWorked      Int
-  basicSalary     Decimal  @db.Decimal(12, 2)
-  allowances      Decimal  @db.Decimal(12, 2)
-  gasoline        Decimal  @db.Decimal(12, 2) @default(0)
-  cashAdvance     Decimal  @db.Decimal(12, 2) @default(0)
-  employeeShare   Decimal  @db.Decimal(12, 2) @default(0)
-  otherDeductions Decimal @db.Decimal(12, 2) @default(0)
-  totalDeductions Decimal  @db.Decimal(12, 2)
-  netPay          Decimal  @db.Decimal(12, 2)
+enum PayrollRunStatus {
+  DRAFT
+  ATTENDANCE_LOCKED
+  CALCULATED
+  PUBLISHED
+}
+
+enum CutoffType {
+  MONTHLY
+  FIRST_HALF
+  SECOND_HALF
+  CUSTOM
+}
+
+enum PayrollRecordStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model PayrollRun {
+  id              String           @id @default(cuid())
+  name            String
+  cutoffType      CutoffType       @default(MONTHLY)
+  startDate       DateTime         @db.Date
+  endDate         DateTime         @db.Date
+  status          PayrollRunStatus @default(DRAFT)
+  totalGross      Decimal          @db.Decimal(12, 2) @default(0)
+  totalDeductions Decimal          @db.Decimal(12, 2) @default(0)
+  totalNet        Decimal          @db.Decimal(12, 2) @default(0)
   processedById   String?
-  createdAt       DateTime @default(now())
+  publishedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
-  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  processedBy User?    @relation("PayrollProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  processedBy    User?           @relation("PayrollRunProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  payrollRecords PayrollRecord[]
 
-  @@unique([employeeId, month, year])
+  @@index([status])
+  @@index([startDate])
+  @@index([endDate])
+  @@map("payroll_runs")
+}
+
+model PayrollRecord {
+  id                  String              @id @default(cuid())
+  payrollRunId        String?
+  employeeId          String
+  month               String
+  year                Int
+  startDate           DateTime?           @db.Date
+  endDate             DateTime?           @db.Date
+  status              PayrollRecordStatus @default(DRAFT)
+  functionalRate      Decimal             @db.Decimal(12, 2)
+  daysWorked          Int
+  basicSalary         Decimal             @db.Decimal(12, 2)
+  allowances          Decimal             @db.Decimal(12, 2) @default(0)
+  gasoline            Decimal             @db.Decimal(12, 2) @default(0)
+  grossPay            Decimal             @db.Decimal(12, 2) @default(0)
+  tardinessMinutes    Int                 @default(0)
+  tardinessDeduction  Decimal             @db.Decimal(12, 2) @default(0)
+  sssDeduction        Decimal             @db.Decimal(12, 2) @default(0)
+  philHealthDeduction Decimal             @db.Decimal(12, 2) @default(0)
+  pagIbigDeduction    Decimal             @db.Decimal(12, 2) @default(0)
+  taxWithheld         Decimal             @db.Decimal(12, 2) @default(0)
+  cashAdvance         Decimal             @db.Decimal(12, 2) @default(0)
+  employeeShare       Decimal             @db.Decimal(12, 2) @default(0)
+  otherDeductions     Decimal             @db.Decimal(12, 2) @default(0)
+  totalDeductions     Decimal             @db.Decimal(12, 2)
+  netPay              Decimal             @db.Decimal(12, 2)
+  processedById       String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @default(now()) @updatedAt
+
+  payrollRun  PayrollRun? @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  processedBy User?       @relation("PayrollProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+
+  @@unique([payrollRunId, employeeId])
   @@index([employeeId])
+  @@index([month, year])
   @@index([year])
+  @@index([status])
   @@map("payroll_records")
 }
 

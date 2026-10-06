@@ -3,6 +3,7 @@ import { AppError } from '../errors/AppError.js';
 import * as employeeRepository from '../repositories/employee.repository.js';
 import * as leaveRepository from '../repositories/leave.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
+import * as payrollRepository from '../repositories/payroll.repository.js';
 import type { CreateLeaveInput } from '../validators/leave.validator.js';
 
 const ANNUAL_LEAVE_CREDIT_DAYS = 15;
@@ -140,6 +141,17 @@ export async function createLeave(params: {
 
   if (startDate > endDate) {
     throw new AppError(400, 'Start date cannot be after the end date.', 'VALIDATION_ERROR');
+  }
+
+  const lockedRun =
+    (await payrollRepository.findConflictingLockedRun(startDate)) ||
+    (await payrollRepository.findConflictingLockedRun(endDate));
+  if (lockedRun && actor.role !== Role.ADMIN) {
+    throw new AppError(
+      400,
+      `Leave requests cannot be filed within locked pay period "${lockedRun.name}".`,
+      'PAYROLL_LOCKED',
+    );
   }
 
   const leaveType = LEAVE_TYPE_TO_DB[input.type];
@@ -306,6 +318,17 @@ export async function approveLeave(params: {
         'LEAVE_LIMIT_REACHED',
       );
     }
+  }
+
+  const lockedRun =
+    (await payrollRepository.findConflictingLockedRun(existing.startDate)) ||
+    (await payrollRepository.findConflictingLockedRun(existing.endDate));
+  if (lockedRun && actor.role !== Role.ADMIN) {
+    throw new AppError(
+      400,
+      `Leave requests cannot be approved within locked pay period "${lockedRun.name}".`,
+      'PAYROLL_LOCKED',
+    );
   }
 
   const updated = await leaveRepository.updateLeaveStatus({

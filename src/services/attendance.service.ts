@@ -3,6 +3,7 @@ import { AppError } from '../errors/AppError.js';
 import * as attendanceRepository from '../repositories/attendance.repository.js';
 import * as employeeRepository from '../repositories/employee.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
+import * as payrollRepository from '../repositories/payroll.repository.js';
 import type { CreateAttendanceInput } from '../validators/attendance.validator.js';
 
 function mapStatus(status: CreateAttendanceInput['status']): AttendanceStatus {
@@ -115,6 +116,15 @@ export async function createAttendance(params: {
   }
 
   const date = parseDate(input.date);
+  const lockedRun = await payrollRepository.findConflictingLockedRun(date);
+  if (lockedRun && actor.role !== Role.ADMIN) {
+    throw new AppError(
+      400,
+      `Attendance is locked for pay period "${lockedRun.name}". Punch records cannot be added while payroll is processing.`,
+      'PAYROLL_LOCKED',
+    );
+  }
+
   const existing = await attendanceRepository.findByEmployeeIdAndDate(employee.id, date);
   if (existing) {
     throw new AppError(

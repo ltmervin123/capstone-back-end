@@ -1,4 +1,4 @@
-import { EmployeeStatus, Role, Sex } from '../src/generated/prisma/index.js';
+import { CutoffType, EmployeeStatus, PayrollRecordStatus, PayrollRunStatus, Role, Sex } from '../src/generated/prisma/index.js';
 import { prisma } from '../src/lib/prisma.js';
 import { permissionsToJson, type UserPermissions } from '../src/types/auth.js';
 import bcrypt from 'bcryptjs';
@@ -47,7 +47,7 @@ const SEED_USERS: SeedUser[] = [
       dashboard: true,
       employees: true,
       attendance: true,
-      payroll: false,
+      payroll: true,
       leaves: true,
       talentAcquisition: true,
       aiSearch: false,
@@ -251,6 +251,122 @@ async function seedUsers(): Promise<void> {
   }
 }
 
+async function seedDemoPayroll(): Promise<void> {
+  const employee = await prisma.employee.findUnique({
+    where: { employeeNumber: 'EMP001' },
+  });
+  const adminUser = await prisma.user.findUnique({
+    where: { username: 'admin' },
+  });
+
+  if (!employee || !adminUser) return;
+
+  // 1. Published June 2026 Run
+  const publishedRun = await prisma.payrollRun.upsert({
+    where: { id: 'seed-run-june-2026' },
+    update: {
+      name: 'June 2026 - Monthly',
+      status: PayrollRunStatus.PUBLISHED,
+      totalGross: 37000,
+      totalDeductions: 5045,
+      totalNet: 31955,
+      publishedAt: new Date('2026-07-01'),
+    },
+    create: {
+      id: 'seed-run-june-2026',
+      name: 'June 2026 - Monthly',
+      cutoffType: CutoffType.MONTHLY,
+      startDate: new Date('2026-06-01'),
+      endDate: new Date('2026-06-30'),
+      status: PayrollRunStatus.PUBLISHED,
+      totalGross: 37000,
+      totalDeductions: 5045,
+      totalNet: 31955,
+      processedById: adminUser.id,
+      publishedAt: new Date('2026-07-01'),
+    },
+  });
+
+  await prisma.payrollRecord.upsert({
+    where: {
+      payrollRunId_employeeId: {
+        payrollRunId: publishedRun.id,
+        employeeId: employee.id,
+      },
+    },
+    update: {
+      status: PayrollRecordStatus.PUBLISHED,
+      functionalRate: 1500,
+      daysWorked: 22,
+      basicSalary: 33000,
+      allowances: 3000,
+      gasoline: 1000,
+      grossPay: 37000,
+      tardinessMinutes: 0,
+      tardinessDeduction: 0,
+      sssDeduction: 1350,
+      philHealthDeduction: 825,
+      pagIbigDeduction: 200,
+      taxWithheld: 2670,
+      cashAdvance: 0,
+      employeeShare: 2375,
+      otherDeductions: 0,
+      totalDeductions: 5045,
+      netPay: 31955,
+    },
+    create: {
+      payrollRunId: publishedRun.id,
+      employeeId: employee.id,
+      month: 'June',
+      year: 2026,
+      startDate: new Date('2026-06-01'),
+      endDate: new Date('2026-06-30'),
+      status: PayrollRecordStatus.PUBLISHED,
+      functionalRate: 1500,
+      daysWorked: 22,
+      basicSalary: 33000,
+      allowances: 3000,
+      gasoline: 1000,
+      grossPay: 37000,
+      tardinessMinutes: 0,
+      tardinessDeduction: 0,
+      sssDeduction: 1350,
+      philHealthDeduction: 825,
+      pagIbigDeduction: 200,
+      taxWithheld: 2670,
+      cashAdvance: 0,
+      employeeShare: 2375,
+      otherDeductions: 0,
+      totalDeductions: 5045,
+      netPay: 31955,
+      processedById: adminUser.id,
+    },
+  });
+
+  // 2. Draft October 2026 Run
+  await prisma.payrollRun.upsert({
+    where: { id: 'seed-run-october-2026' },
+    update: {
+      name: 'October 2026 - Monthly',
+      status: PayrollRunStatus.DRAFT,
+    },
+    create: {
+      id: 'seed-run-october-2026',
+      name: 'October 2026 - Monthly',
+      cutoffType: CutoffType.MONTHLY,
+      startDate: new Date('2026-10-01'),
+      endDate: new Date('2026-10-31'),
+      status: PayrollRunStatus.DRAFT,
+      totalGross: 0,
+      totalDeductions: 0,
+      totalNet: 0,
+      processedById: adminUser.id,
+    },
+  });
+
+  console.log('  ✓ demo payroll runs (June 2026 published, October 2026 draft)');
+}
+
 async function main(): Promise<void> {
   console.log('🌱 Seeding database...');
 
@@ -258,6 +374,7 @@ async function main(): Promise<void> {
   await seedDocumentTypes();
   await seedDemoEmployee(departmentIds);
   await seedUsers();
+  await seedDemoPayroll();
 
   console.log('✅ Database seeded successfully!');
 }
