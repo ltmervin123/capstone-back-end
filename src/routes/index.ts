@@ -8,6 +8,7 @@ import employeeRoutes from './employee.routes.js';
 import feedbackRoutes from './feedback.routes.js';
 import leaveRoutes from './leave.routes.js';
 import payrollRoutes from './payroll.routes.js';
+import reportRoutes from './report.routes.js';
 import userRoutes from './user.routes.js';
 
 const router: Router = Router();
@@ -19,6 +20,7 @@ router.use('/employees', employeeRoutes);
 router.use('/attendance', attendanceRoutes);
 router.use('/leaves', leaveRoutes);
 router.use('/payroll', payrollRoutes);
+router.use('/reports', reportRoutes);
 router.use('/applicants', applicantRoutes);
 router.use('/feedback', feedbackRoutes);
 router.use('/users', userRoutes);
