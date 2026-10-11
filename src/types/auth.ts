@@ -74,6 +74,7 @@ export interface AuthUser {
   isApproved: boolean;
   permissions: UserPermissions | null;
   employeeId: string | null;
+  profilePicture?: string;
   createdAt: Date;
   updatedAt: Date;
 }

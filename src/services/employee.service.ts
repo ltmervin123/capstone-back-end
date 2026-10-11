@@ -168,6 +168,8 @@ async function ensureMissingEmployeeLogins(): Promise<void> {
     return;
   }
 
+  console.log(`Creating login accounts for ${missing.length} employees...`);
+
   const employeeNumbers = missing.map((employee) => employee.employeeNumber);
   const emails = missing.map((employee) => employee.email);
   const conflicts = await userRepository.listConflictingLogins({

@@ -37,6 +37,10 @@ async function startServer(): Promise<void> {
       process.exit(1);
     }
 
+    const { ensureDepartmentDummyAccounts } = await import('./services/departmentDummy.service.js');
+    const createdDummyEmployees = await ensureDepartmentDummyAccounts();
+    console.log(`✓ Department dummy employees ready (${createdDummyEmployees} new)`);
+
     const { provisionEmployeeLogins } = await import('./services/employee.service.js');
     await provisionEmployeeLogins();
     console.log('✓ Employee login accounts provisioned');

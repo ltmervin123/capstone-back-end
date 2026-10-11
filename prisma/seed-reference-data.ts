@@ -1,29 +1,4 @@
-export const DEPARTMENTS = [
-  'Office of the President',
-  'School Administrator / Graduate School',
-  'Accounting /Finance Department',
-  'Quality Assurance Office',
-  'Director for Academic Affairs',
-  'CEAS',
-  'CIT',
-  'CBA',
-  'CHM',
-  'CCJE',
-  'DSA',
-  'Basic Education',
-  'Registrar',
-  'Research, Planning, & Extension',
-  'NORMI Bookstore',
-  'GSO',
-  'Library',
-  'Clinic',
-  'Guidance',
-  'Scholarship',
-  'TVED',
-  'MIS',
-  'Admission and Testing',
-  'DPO',
-] as const;
+export { DEPARTMENTS } from '../src/data/departments.js';
 
 export const DOCUMENT_CATEGORIES = [
   {
