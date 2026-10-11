@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import { Role } from '../generated/prisma/index.js';
 import * as aiController from '../controllers/ai.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
-import { requireRoles } from '../middleware/authorize.middleware.js';
+import { requirePermission } from '../middleware/authorize.middleware.js';
 import { validateBody, validateParams } from '../middleware/validator.js';
 import {
   conversationIdParamSchema,
@@ -15,21 +14,21 @@ const router: Router = Router();
 router.get(
   '/conversations',
   authenticate,
-  requireRoles(Role.ADMIN),
+  requirePermission('aiSearch'),
   aiController.listConversations
 );
 
 router.delete(
   '/conversations',
   authenticate,
-  requireRoles(Role.ADMIN),
+  requirePermission('aiSearch'),
   aiController.clearAllConversations
 );
 
 router.get(
   '/conversations/:id',
   authenticate,
-  requireRoles(Role.ADMIN),
+  requirePermission('aiSearch'),
   validateParams(conversationIdParamSchema),
   aiController.getConversation
 );
@@ -37,7 +36,7 @@ router.get(
 router.patch(
   '/conversations/:id',
   authenticate,
-  requireRoles(Role.ADMIN),
+  requirePermission('aiSearch'),
   validateParams(conversationIdParamSchema),
   validateBody(renameConversationSchema),
   aiController.renameConversation
@@ -46,7 +45,7 @@ router.patch(
 router.delete(
   '/conversations/:id',
   authenticate,
-  requireRoles(Role.ADMIN),
+  requirePermission('aiSearch'),
   validateParams(conversationIdParamSchema),
   aiController.deleteConversation
 );
@@ -54,7 +53,7 @@ router.delete(
 router.post(
   '/chat/stream',
   authenticate,
-  requireRoles(Role.ADMIN),
+  requirePermission('aiSearch'),
   validateBody(streamChatBodySchema),
   aiController.streamChat
 );

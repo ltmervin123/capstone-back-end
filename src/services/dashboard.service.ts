@@ -9,6 +9,7 @@ import {
 import { AppError } from '../errors/AppError.js';
 import * as dashboardRepository from '../repositories/dashboard.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
+import { permissionsFromJson } from '../types/auth.js';
 
 const LEAVE_TYPE_TO_FRONTEND: Record<LeaveType, string> = {
   [LeaveType.LEAVE_CREDITS]: 'Leave Credits',
@@ -33,21 +34,26 @@ function startOfUtcDay(date: Date): Date {
   return new Date(`${date.toISOString().slice(0, 10)}T00:00:00.000Z`);
 }
 
-async function requireHrActor(actorUserId: string) {
+async function requireDashboardActor(actorUserId: string) {
   const actor = await userRepository.findById(actorUserId);
   if (!actor) {
     throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
   }
 
-  if (actor.role !== Role.ADMIN && actor.role !== Role.HR) {
-    throw new AppError(403, 'Forbidden', 'FORBIDDEN');
+  if (actor.role === Role.ADMIN) {
+    return actor;
   }
 
-  return actor;
+  const permissions = permissionsFromJson(actor.permissions);
+  if (permissions?.dashboard === true) {
+    return actor;
+  }
+
+  throw new AppError(403, 'Forbidden', 'FORBIDDEN');
 }
 
 export async function getDashboardSummary(actorUserId: string) {
-  await requireHrActor(actorUserId);
+  await requireDashboardActor(actorUserId);
 
   const today = startOfUtcDay(new Date());
 
