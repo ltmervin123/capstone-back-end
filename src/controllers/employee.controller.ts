@@ -3,6 +3,7 @@ import type { Express } from 'express';
 import { Role } from '../generated/prisma/index.js';
 import { AppError } from '../errors/AppError.js';
 import * as employeeService from '../services/employee.service.js';
+import * as documentExtractionService from '../services/documentExtraction.service.js';
 import {
   createEmployeeBodySchema,
   documentLabelsSchema,
@@ -208,6 +209,44 @@ export async function deleteEmployee(req: Request, res: Response, next: NextFunc
       success: true,
       data: result,
       message: 'Employee deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function extractEmployeeDocument(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    if (req.user.role !== Role.ADMIN && req.user.role !== Role.HR) {
+      throw new AppError(403, 'Forbidden', 'FORBIDDEN');
+    }
+
+    const file = req.file;
+    if (!file) {
+      throw new AppError(
+        400,
+        'Please upload a PDF document file under the "document" field.',
+        'NO_FILE_UPLOADED'
+      );
+    }
+
+    const extracted = await documentExtractionService.extractEmployeeFromPdf(
+      file.buffer,
+      file.originalname
+    );
+
+    res.status(200).json({
+      success: true,
+      data: extracted,
+      message: 'Document analyzed and extracted successfully',
     });
   } catch (error) {
     next(error);

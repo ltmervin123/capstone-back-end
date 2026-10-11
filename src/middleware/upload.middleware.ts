@@ -31,6 +31,24 @@ export const employeeCreateUpload: RequestHandler = employeeUpload.fields([
   { name: 'documents', maxCount: 40 },
 ]);
 
+export const pdfDocumentUpload: RequestHandler = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1,
+  },
+  fileFilter: (_req, file, cb) => {
+    const isPdfMime =
+      file.mimetype === 'application/pdf' || file.mimetype === 'application/x-pdf';
+    const isPdfExt = file.originalname.toLowerCase().endsWith('.pdf');
+    if (!isPdfMime && !isPdfExt) {
+      cb(new AppError(400, 'Only PDF documents are supported.', 'INVALID_FILE_TYPE'));
+      return;
+    }
+    cb(null, true);
+  },
+}).single('document');
+
 /**
  * No-op: memory uploads have no local files to clean.
  * Kept so errorHandler call sites stay stable.
