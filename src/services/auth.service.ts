@@ -1,6 +1,7 @@
 import type { User } from '../generated/prisma/index.js';
 import { env } from '../config/env.js';
 import { AppError } from '../errors/AppError.js';
+import * as employeeRepository from '../repositories/employee.repository.js';
 import * as refreshTokenRepository from '../repositories/refreshToken.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
 import type { AuthUser } from '../types/auth.js';
@@ -12,6 +13,7 @@ import {
   hashToken,
 } from '../utils/crypto.js';
 import { parseDurationToDate } from '../utils/duration.js';
+import { toPublicAssetUrl } from '../utils/fileStorage.js';
 import { signAccessToken } from '../utils/jwt.js';
 import type { ChangePasswordInput, LoginInput } from '../validators/auth.validator.js';
 
@@ -41,6 +43,21 @@ function toAuthUser(user: User): AuthUser {
   };
 }
 
+async function toAuthUserWithProfile(user: User): Promise<AuthUser> {
+  const authUser = toAuthUser(user);
+  if (!user.employeeId) {
+    return authUser;
+  }
+
+  const employee = await employeeRepository.findByEmployeeNumber(user.employeeId);
+  const profilePicture = toPublicAssetUrl(employee?.profilePictureUrl);
+  if (!profilePicture) {
+    return authUser;
+  }
+
+  return { ...authUser, profilePicture };
+}
+
 async function createSession(user: User, meta: SessionMeta = {}): Promise<AuthSession> {
   const accessToken = signAccessToken({
     sub: user.id,
@@ -61,7 +78,7 @@ async function createSession(user: User, meta: SessionMeta = {}): Promise<AuthSe
   return {
     accessToken,
     refreshToken,
-    user: toAuthUser(user),
+    user: await toAuthUserWithProfile(user),
   };
 }
 
@@ -109,7 +126,7 @@ export async function getCurrentUser(userId: string): Promise<AuthUser> {
     throw new AppError(403, 'Your account is pending approval.', 'ACCOUNT_PENDING');
   }
 
-  return toAuthUser(user);
+  return toAuthUserWithProfile(user);
 }
 
 export async function refreshSession(
