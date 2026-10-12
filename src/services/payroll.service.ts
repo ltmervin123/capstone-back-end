@@ -29,7 +29,7 @@ function requirePayrollAccess(actor: { role: Role; permissions?: unknown }) {
   if (actor.role === Role.ADMIN) return;
   if (actor.role === Role.HR) {
     const perms = actor.permissions as { payroll?: boolean } | null;
-    if (perms?.payroll === false) {
+    if (!perms || perms.payroll !== true) {
       throw new AppError(403, 'User lacks payroll management permission', 'FORBIDDEN');
     }
     return;

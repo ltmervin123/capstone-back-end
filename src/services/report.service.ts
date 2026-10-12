@@ -14,11 +14,9 @@ export async function requireReportsActor(actorUserId: string) {
     return actor;
   }
 
-  if (actor.role === Role.HR) {
-    const permissions = permissionsFromJson(actor.permissions);
-    if (permissions && permissions.reports) {
-      return actor;
-    }
+  const permissions = permissionsFromJson(actor.permissions);
+  if (permissions && permissions.reports === true) {
+    return actor;
   }
 
   throw new AppError(403, 'Forbidden', 'FORBIDDEN');

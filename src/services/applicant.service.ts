@@ -3,6 +3,7 @@ import { AppError } from '../errors/AppError.js';
 import * as applicantRepository from '../repositories/applicant.repository.js';
 import * as employeeRepository from '../repositories/employee.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
+import { permissionsFromJson } from '../types/auth.js';
 import type {
   CreateApplicantInput,
   UpdateApplicantInput,
@@ -54,17 +55,22 @@ function toFrontendApplicant(
   };
 }
 
-async function requireHrActor(actorUserId: string) {
+async function requireTalentAcquisitionActor(actorUserId: string) {
   const actor = await userRepository.findById(actorUserId);
   if (!actor) {
     throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
   }
 
-  if (actor.role !== Role.ADMIN && actor.role !== Role.HR) {
-    throw new AppError(403, 'Forbidden', 'FORBIDDEN');
+  if (actor.role === Role.ADMIN) {
+    return actor;
   }
 
-  return actor;
+  const permissions = permissionsFromJson(actor.permissions);
+  if (permissions?.talentAcquisition === true) {
+    return actor;
+  }
+
+  throw new AppError(403, 'Forbidden', 'FORBIDDEN');
 }
 
 async function resolveDepartmentId(departmentName: string | undefined): Promise<string | null> {
@@ -97,7 +103,7 @@ async function toApplicantRecord(input: CreateApplicantInput | UpdateApplicantIn
 }
 
 export async function listApplicants(actorUserId: string) {
-  await requireHrActor(actorUserId);
+  await requireTalentAcquisitionActor(actorUserId);
   const records = await applicantRepository.listApplicants();
   return records.map(toFrontendApplicant);
 }
@@ -108,7 +114,7 @@ export async function createApplicant(params: {
   ipAddress?: string;
 }) {
   const { input, actorUserId, ipAddress } = params;
-  const actor = await requireHrActor(actorUserId);
+  const actor = await requireTalentAcquisitionActor(actorUserId);
   const record = await toApplicantRecord(input, actorUserId);
 
   const created = await applicantRepository.createApplicant({
@@ -132,7 +138,7 @@ export async function updateApplicant(params: {
   ipAddress?: string;
 }) {
   const { applicantId, input, actorUserId, ipAddress } = params;
-  const actor = await requireHrActor(actorUserId);
+  const actor = await requireTalentAcquisitionActor(actorUserId);
 
   const existing = await applicantRepository.findById(applicantId);
   if (!existing) {
@@ -162,7 +168,7 @@ export async function deleteApplicant(params: {
   ipAddress?: string;
 }) {
   const { applicantId, actorUserId, ipAddress } = params;
-  const actor = await requireHrActor(actorUserId);
+  const actor = await requireTalentAcquisitionActor(actorUserId);
 
   const existing = await applicantRepository.findById(applicantId);
   if (!existing) {

@@ -1,5 +1,4 @@
 import type { NextFunction, Request, Response } from 'express';
-import { Role } from '../generated/prisma/index.js';
 import { AppError } from '../errors/AppError.js';
 import * as applicantService from '../services/applicant.service.js';
 import type {
@@ -7,13 +6,9 @@ import type {
   UpdateApplicantInput,
 } from '../validators/applicant.validator.js';
 
-function requireHrUser(req: Request) {
+function requireAuthUser(req: Request) {
   if (!req.user) {
     throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
-  }
-
-  if (req.user.role !== Role.ADMIN && req.user.role !== Role.HR) {
-    throw new AppError(403, 'Forbidden', 'FORBIDDEN');
   }
 
   return req.user;
@@ -29,7 +24,7 @@ function requireApplicantId(req: Request) {
 
 export async function listApplicants(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const actor = requireHrUser(req);
+    const actor = requireAuthUser(req);
     const applicants = await applicantService.listApplicants(actor.id);
     res.status(200).json({
       success: true,
@@ -42,7 +37,7 @@ export async function listApplicants(req: Request, res: Response, next: NextFunc
 
 export async function createApplicant(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const actor = requireHrUser(req);
+    const actor = requireAuthUser(req);
     const applicant = await applicantService.createApplicant({
       input: req.body as CreateApplicantInput,
       actorUserId: actor.id,
@@ -61,7 +56,7 @@ export async function createApplicant(req: Request, res: Response, next: NextFun
 
 export async function updateApplicant(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const actor = requireHrUser(req);
+    const actor = requireAuthUser(req);
     const applicant = await applicantService.updateApplicant({
       applicantId: requireApplicantId(req),
       input: req.body as UpdateApplicantInput,
@@ -81,7 +76,7 @@ export async function updateApplicant(req: Request, res: Response, next: NextFun
 
 export async function deleteApplicant(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const actor = requireHrUser(req);
+    const actor = requireAuthUser(req);
     const result = await applicantService.deleteApplicant({
       applicantId: requireApplicantId(req),
       actorUserId: actor.id,
