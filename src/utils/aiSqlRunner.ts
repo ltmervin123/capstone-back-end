@@ -98,15 +98,67 @@ export function validateSqlQuery(rawQuery: string): SqlValidationResult {
     }
   }
 
-  // Enforce max LIMIT 100 if query has no LIMIT clause
+  // Enforce max LIMIT 50 if query has no LIMIT clause
   if (!/\bLIMIT\b/i.test(cleaned)) {
-    cleaned = `${cleaned} LIMIT 100`;
+    cleaned = `${cleaned} LIMIT 50`;
   }
 
   return {
     isValid: true,
     sanitizedQuery: cleaned,
   };
+}
+
+export interface CompactSqlResult {
+  totalCount: number;
+  columns: string[];
+  rows: unknown[][];
+  note?: string;
+}
+
+/**
+ * Compacts and serializes database rows for AI consumption to minimize token payload:
+ * 1. Clamps rows to maxRows (default 50).
+ * 2. Formats as a columnar structure { columns, rows } instead of repeating JSON keys for every object.
+ * 3. Truncates bulky OCR/document text fields (e.g. extractedText) to protect context window.
+ */
+export function serializeSqlRowsForAi(
+  rows: Record<string, unknown>[],
+  totalCount: number,
+  maxRows = 50
+): string {
+  if (!rows || rows.length === 0) {
+    return JSON.stringify({ totalCount: 0, columns: [], rows: [] });
+  }
+
+  const cappedRows = rows.slice(0, maxRows);
+  const columns = Object.keys(cappedRows[0] || {});
+
+  const values = cappedRows.map((row) =>
+    columns.map((col) => {
+      const val = row[col];
+      if (
+        typeof val === 'string' &&
+        val.length > 300 &&
+        /extractedText|extracted_text/i.test(col)
+      ) {
+        return `${val.slice(0, 300)}... [truncated]`;
+      }
+      return val;
+    })
+  );
+
+  const payload: CompactSqlResult = {
+    totalCount,
+    columns,
+    rows: values,
+  };
+
+  if (totalCount > maxRows) {
+    payload.note = `Showing top ${maxRows} of ${totalCount} records.`;
+  }
+
+  return JSON.stringify(payload);
 }
 
 export async function executeReadOnlyQuery(
@@ -142,3 +194,4 @@ export async function executeReadOnlyQuery(
     client.release();
   }
 }
+

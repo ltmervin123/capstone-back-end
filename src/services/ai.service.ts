@@ -7,7 +7,7 @@ import { AiMessageRole } from '../generated/prisma/index.js';
 import { prisma } from '../lib/prisma.js';
 import * as aiRepository from '../repositories/ai.repository.js';
 import { getAiSystemPrompt } from '../utils/aiSchemaGenerator.js';
-import { executeReadOnlyQuery } from '../utils/aiSqlRunner.js';
+import { executeReadOnlyQuery, serializeSqlRowsForAi } from '../utils/aiSqlRunner.js';
 
 const anthropic = new Anthropic({
   apiKey: env.ANTHROPIC_API_KEY,
@@ -16,7 +16,7 @@ const anthropic = new Anthropic({
 const DB_QUERY_TOOL: Anthropic.Tool = {
   name: 'execute_read_query',
   description:
-    'Executes a safe, read-only SELECT query against the PostgreSQL database to retrieve verified factual records. Only SELECT or WITH statements are allowed. Returns an array of row objects.',
+    'Executes a safe, read-only SELECT query against the PostgreSQL database to retrieve verified factual records. Only SELECT or WITH statements are allowed. Returns a compact object with { totalCount, columns, rows } where rows are arrays matching the columns array.',
   input_schema: {
     type: 'object',
     properties: {
@@ -32,7 +32,46 @@ const DB_QUERY_TOOL: Anthropic.Tool = {
     },
     required: ['query'],
   },
+  cache_control: { type: 'ephemeral' },
 };
+
+/**
+ * Returns the cached system prompt block with Anthropic Ephemeral Prompt Caching enabled.
+ * Slashes input token consumption and latency by up to 90% across repeated turns and requests.
+ */
+function getCachedSystemPrompt(): Anthropic.TextBlockParam[] {
+  return [
+    {
+      type: 'text',
+      text: getAiSystemPrompt(),
+      cache_control: { type: 'ephemeral' },
+    },
+  ];
+}
+
+/**
+ * Prunes past assistant messages before including them in the multi-turn context window:
+ * 1. Replaces heavy raw ````json:chart```` blocks with short placeholders.
+ * 2. Truncates long markdown tables (>8 rows) to preserve semantic intent without wasting thousands of tokens.
+ */
+function pruneAssistantContentForContext(content: string): string {
+  // 1. Strip bulky interactive chart JSON blocks
+  let pruned = content.replace(/```json:chart[\s\S]*?```/g, '[Interactive chart rendered]');
+
+  // 2. Truncate long markdown tables (>8 rows) to save context tokens while keeping headers & sample rows
+  const tableRegex = /((?:\|[^\n]+\|\r?\n){3,})/g;
+  pruned = pruned.replace(tableRegex, (match) => {
+    const lines = match.trim().split(/\r?\n/);
+    if (lines.length > 8) {
+      const kept = lines.slice(0, 5);
+      kept.push('| ... | [Table truncated for context] |');
+      return kept.join('\n') + '\n\n';
+    }
+    return match;
+  });
+
+  return pruned.trim();
+}
 
 
 export interface ChatMessageInput {
@@ -170,24 +209,30 @@ export async function streamChatWithDatabase({
     const formattedMessages: Anthropic.MessageParam[] = [];
 
     if (history && history.length > 0) {
-      const recentHistory = history.slice(-10);
+      const recentHistory = history.slice(-6);
       for (const h of recentHistory) {
         if (h.role === 'user' || h.role === 'assistant') {
           formattedMessages.push({
             role: h.role,
-            content: h.content,
+            content:
+              h.role === 'assistant'
+                ? pruneAssistantContentForContext(h.content)
+                : h.content,
           });
         }
       }
     } else {
-      // Pull recent messages from DB for multi-turn context (excluding the one just inserted)
-      const recentDbMessages = await aiRepository.getRecentMessages(activeConversationId, 10);
+      // Pull recent messages from DB for multi-turn context (sliding window of 6)
+      const recentDbMessages = await aiRepository.getRecentMessages(activeConversationId, 6);
       // The last one in recentDbMessages is the current user message, so take all but last
       const priorMessages = recentDbMessages.slice(0, -1);
       for (const m of priorMessages) {
         formattedMessages.push({
           role: m.role === AiMessageRole.USER ? 'user' : 'assistant',
-          content: m.content,
+          content:
+            m.role === AiMessageRole.ASSISTANT
+              ? pruneAssistantContentForContext(m.content)
+              : m.content,
         });
       }
     }
@@ -198,12 +243,12 @@ export async function streamChatWithDatabase({
       content: message,
     });
 
-    // Step 1: Initial call to Claude with tool definition to check if DB query is needed
+    // Step 1: Initial call to Claude with cached system prompt & tool to check if DB query is needed
     let currentResponse = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2048,
       temperature: 0.1,
-      system: getAiSystemPrompt(),
+      system: getCachedSystemPrompt(),
       messages: formattedMessages,
       tools: [DB_QUERY_TOOL],
     });
@@ -238,10 +283,15 @@ export async function streamChatWithDatabase({
               query: execution.queryUsed,
               rowCount: execution.rowCount,
             });
+            // Compact columnar serialization (saves 50-70% payload tokens vs raw repeated JSON objects)
+            const compactPayload = serializeSqlRowsForAi(
+              execution.rows,
+              execution.rowCount
+            );
             toolResults.push({
               type: 'tool_result',
               tool_use_id: toolBlock.id,
-              content: JSON.stringify(execution.rows),
+              content: compactPayload,
             });
           } catch (err) {
             const queryError = err instanceof Error ? err.message : 'Database query failed';
@@ -275,40 +325,16 @@ export async function streamChatWithDatabase({
         content: toolResults,
       });
 
-      // If we have query rounds remaining, check if Claude needs a follow-up query before final synthesis
-      if (round < 4) {
-        const nextCheck = await anthropic.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 2048,
-          temperature: 0.1,
-          system: getAiSystemPrompt(),
-          messages: formattedMessages,
-          tools: [DB_QUERY_TOOL],
-        });
-
-        const nextToolUse = nextCheck.content.filter(
-          (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
-        );
-
-        if (nextToolUse.length > 0) {
-          currentResponse = nextCheck;
-          toolUseBlocks = nextToolUse;
-          continue;
-        } else {
-          break;
-        }
-      }
-    }
-
-    if (round > 0) {
+      // Single-pass direct streaming: stream response directly to client without duplicate pre-check
       sendSseEvent(res, 'status', { message: 'Synthesizing response...' });
 
       const stream = anthropic.messages.stream({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 2048,
         temperature: 0.1,
-        system: getAiSystemPrompt(),
+        system: getCachedSystemPrompt(),
         messages: formattedMessages,
+        ...(round < 3 ? { tools: [DB_QUERY_TOOL] } : {}),
       });
 
       stream.on('text', (textDelta) => {
@@ -316,9 +342,23 @@ export async function streamChatWithDatabase({
         sendSseEvent(res, 'delta', { text: textDelta });
       });
 
-      await stream.finalMessage();
-    } else {
-      // No tool call needed (e.g. conversational greeting or clarification)
+      const nextMessage = await stream.finalMessage();
+      const nextToolUse = nextMessage.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
+      );
+
+      // If Claude requests a follow-up query round, continue the loop; otherwise response is already streamed
+      if (nextToolUse.length > 0 && round < 4) {
+        currentResponse = nextMessage;
+        toolUseBlocks = nextToolUse;
+        continue;
+      } else {
+        break;
+      }
+    }
+
+    if (round === 0) {
+      // Direct text response without tools (e.g. conversational greeting or clarification)
       const directText = currentResponse.content
         .filter((b): b is Anthropic.ToolUseBlock | Anthropic.TextBlock => b.type === 'text')
         .map((b) => (b as Anthropic.TextBlock).text)
