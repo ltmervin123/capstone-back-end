@@ -1,5 +1,6 @@
 import type { Express } from 'express';
-import { EmployeeStatus, Sex } from '../generated/prisma/index.js';
+import { EmployeeStatus, Role, Sex } from '../generated/prisma/index.js';
+import { prisma } from '../lib/prisma.js';
 import { AppError } from '../errors/AppError.js';
 import * as employeeRepository from '../repositories/employee.repository.js';
 import * as userRepository from '../repositories/user.repository.js';
@@ -17,6 +18,7 @@ import {
 import { toPublicAssetUrl } from '../utils/fileStorage.js';
 import type {
   CreateEmployeeInput,
+  CreatePromotionInput,
   DocumentLabelInput,
 } from '../validators/employee.validator.js';
 
@@ -752,4 +754,206 @@ export async function deleteEmployee(params: {
   await destroyEmployeeCloudFolder(existing.employeeNumber);
 
   return { employeeNumber: existing.employeeNumber };
+}
+
+export async function getEmployeePromotions(params: {
+  employeeNumber: string;
+  actorUserId: string;
+}) {
+  const employee = await employeeRepository.findByEmployeeNumber(params.employeeNumber);
+  if (!employee) {
+    throw new AppError(404, 'Employee not found', 'EMPLOYEE_NOT_FOUND');
+  }
+
+  const promotions = await employeeRepository.listEmployeePromotions(employee.id);
+
+  return promotions.map((p) => {
+    const isApproved = Boolean(
+      p.approvedById || (p.remarks && p.remarks.toLowerCase().includes('approved')),
+    );
+    return {
+      id: p.id,
+      employeeId: p.employeeId,
+      employeeNumber: p.employee.employeeNumber,
+      fullName: `${p.employee.surname}, ${p.employee.firstName}`,
+      previousPosition: p.previousPosition || p.employee.position,
+      newPosition: p.newPosition || 'Promoted Role',
+      previousDepartment: p.previousDepartment?.name || p.employee.department?.name,
+      newDepartment: p.newDepartment?.name || p.employee.department?.name,
+      effectiveDate: p.effectiveDate.toISOString().slice(0, 10),
+      remarks: p.remarks || '',
+      isApproved,
+      status: isApproved ? 'Approved & Scheduled' : 'Recommended & Pending',
+      approvedBy: p.approvedBy?.username || null,
+      createdBy: p.createdBy?.username || null,
+      createdAt: p.createdAt.toISOString(),
+    };
+  });
+}
+
+export async function promoteEmployee(params: {
+  employeeNumber: string;
+  actorUserId: string;
+  input: CreatePromotionInput;
+  documentFile?: Express.Multer.File | undefined;
+  ipAddress?: string | undefined;
+}) {
+  const actor = await userRepository.findById(params.actorUserId);
+  if (!actor) {
+    throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+  }
+
+  const employee = await employeeRepository.findByEmployeeNumberWithDetails(params.employeeNumber);
+  if (!employee) {
+    throw new AppError(404, 'Employee not found', 'EMPLOYEE_NOT_FOUND');
+  }
+
+  // Admin can submit as approved directly (default: true unless explicitly false)
+  // Non-Admin (HR) can only submit as pending recommendation (isApproved: false)
+  const isApproved = actor.role === Role.ADMIN ? params.input.isApproved !== false : false;
+
+  // Resolve target department
+  let targetDepartmentId = employee.departmentId;
+  if (params.input.newDepartmentId) {
+    const dept = await prisma.department.findUnique({ where: { id: params.input.newDepartmentId } });
+    if (!dept) {
+      throw new AppError(400, 'Invalid department selected', 'VALIDATION_ERROR');
+    }
+    targetDepartmentId = dept.id;
+  } else if (params.input.newDepartmentName) {
+    const dept = await employeeRepository.findDepartmentByName(params.input.newDepartmentName);
+    if (!dept) {
+      throw new AppError(400, 'Invalid department selected', 'VALIDATION_ERROR');
+    }
+    targetDepartmentId = dept.id;
+  }
+
+  const effectiveDate = parseDate(params.input.effectiveDate, 'effectiveDate');
+
+  let docAttachment: employeeRepository.PromotionDocumentAttachment | undefined;
+  if (params.documentFile) {
+    if (!params.documentFile.buffer?.length) {
+      throw new AppError(400, 'Document upload is empty', 'INVALID_FILE');
+    }
+    const uploaded = await uploadBufferToCloudinary({
+      buffer: params.documentFile.buffer,
+      folder: employeeDocumentCloudFolder(employee.employeeNumber, 'administrative'),
+      originalName: params.documentFile.originalname,
+    });
+    docAttachment = {
+      url: uploaded.url,
+      fileName: params.documentFile.originalname,
+      fileSize: params.documentFile.size,
+      mimeType: params.documentFile.mimetype,
+    };
+  }
+
+  const salaryDetail =
+    params.input.newFunctionalRate !== undefined
+      ? ` | New Functional Rate: ₱${params.input.newFunctionalRate.toLocaleString()}`
+      : '';
+
+  const fullRemarks = `${params.input.remarks}${salaryDetail}`;
+
+  const auditDetails = isApproved
+    ? `${employee.employeeNumber} — ${employee.firstName} ${employee.surname} promoted from "${employee.position}" to "${params.input.newPosition}"${salaryDetail}. Effective: ${params.input.effectiveDate}. Rationale: ${params.input.remarks}`
+    : `${employee.employeeNumber} — ${employee.firstName} ${employee.surname} recommended for promotion to "${params.input.newPosition}"${salaryDetail}. Rationale: ${params.input.remarks}`;
+
+  const promotion = await employeeRepository.createPromotionRecord({
+    employeeId: employee.id,
+    previousPosition: employee.position,
+    newPosition: params.input.newPosition,
+    previousDepartmentId: employee.departmentId,
+    newDepartmentId: targetDepartmentId,
+    effectiveDate,
+    ...(params.input.newFunctionalRate !== undefined
+      ? { newFunctionalRate: params.input.newFunctionalRate }
+      : {}),
+    remarks: fullRemarks,
+    isApproved,
+    actorUserId: actor.id,
+    actorUsername: actor.username,
+    ...(params.ipAddress ? { ipAddress: params.ipAddress } : {}),
+    auditDetails,
+    ...(docAttachment ? { document: docAttachment } : {}),
+  });
+
+  return {
+    id: promotion.id,
+    employeeNumber: employee.employeeNumber,
+    fullName: `${employee.surname}, ${employee.firstName}`,
+    previousPosition: promotion.previousPosition,
+    newPosition: promotion.newPosition,
+    effectiveDate: promotion.effectiveDate.toISOString().slice(0, 10),
+    isApproved,
+    status: isApproved ? 'Approved & Scheduled' : 'Recommended & Pending',
+    remarks: promotion.remarks,
+  };
+}
+
+export async function approvePromotion(params: {
+  employeeNumber: string;
+  promotionId: string;
+  actorUserId: string;
+  ipAddress?: string | undefined;
+}) {
+  const actor = await userRepository.findById(params.actorUserId);
+  if (!actor) {
+    throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+  }
+
+  if (actor.role !== Role.ADMIN) {
+    throw new AppError(403, 'Only administrators can approve promotions', 'FORBIDDEN');
+  }
+
+  const employee = await employeeRepository.findByEmployeeNumber(params.employeeNumber);
+  if (!employee) {
+    throw new AppError(404, 'Employee not found', 'EMPLOYEE_NOT_FOUND');
+  }
+
+  const updatedPromotion = await employeeRepository.approvePromotionRecord({
+    employeeId: employee.id,
+    promotionId: params.promotionId,
+    actorUserId: actor.id,
+    actorUsername: actor.username,
+    ...(params.ipAddress ? { ipAddress: params.ipAddress } : {}),
+  });
+
+  return {
+    id: updatedPromotion.id,
+    employeeNumber: employee.employeeNumber,
+    fullName: `${employee.surname}, ${employee.firstName}`,
+    newPosition: updatedPromotion.newPosition,
+    status: 'Approved & Scheduled',
+    approvedBy: actor.username,
+  };
+}
+
+export async function deletePendingPromotion(params: {
+  employeeNumber: string;
+  promotionId: string;
+  actorUserId: string;
+  ipAddress?: string | undefined;
+}) {
+  const actor = await userRepository.findById(params.actorUserId);
+  if (!actor) {
+    throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+  }
+
+  if (actor.role !== Role.ADMIN) {
+    throw new AppError(403, 'Only administrators can discard promotions', 'FORBIDDEN');
+  }
+
+  const employee = await employeeRepository.findByEmployeeNumber(params.employeeNumber);
+  if (!employee) {
+    throw new AppError(404, 'Employee not found', 'EMPLOYEE_NOT_FOUND');
+  }
+
+  return employeeRepository.deletePendingPromotionRecord({
+    employeeId: employee.id,
+    promotionId: params.promotionId,
+    actorUserId: actor.id,
+    actorUsername: actor.username,
+    ...(params.ipAddress ? { ipAddress: params.ipAddress } : {}),
+  });
 }

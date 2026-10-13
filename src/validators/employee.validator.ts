@@ -74,3 +74,21 @@ export const removedDocumentsSchema = documentLabelsSchema;
 export type CreateEmployeeInput = z.infer<typeof createEmployeeBodySchema>;
 export type UpdateEmployeeInput = z.infer<typeof updateEmployeeBodySchema>;
 export type DocumentLabelInput = z.infer<typeof documentLabelSchema>;
+
+export const createPromotionSchema = z.object({
+  newPosition: z.string().trim().min(1, 'New position is required').max(150),
+  newDepartmentId: z.string().trim().optional(),
+  newDepartmentName: z.string().trim().optional(),
+  effectiveDate: z.string().trim().min(1, 'Effective date is required'),
+  newFunctionalRate: z.coerce.number().nonnegative().optional(),
+  remarks: z.string().trim().min(3, 'Promotion rationale is required').max(1000),
+  isApproved: z
+    .preprocess((val) => {
+      if (val === 'true' || val === true) return true;
+      if (val === 'false' || val === false) return false;
+      return undefined;
+    }, z.boolean().optional()),
+});
+
+export type CreatePromotionInput = z.infer<typeof createPromotionSchema>;
+

@@ -1,4 +1,11 @@
-import { Role, type Employee, type EmployeeStatus, type Prisma, type Sex } from '../generated/prisma/index.js';
+import {
+  EmploymentChangeType,
+  Role,
+  type Employee,
+  type EmployeeStatus,
+  type Prisma,
+  type Sex,
+} from '../generated/prisma/index.js';
 import { prisma } from '../lib/prisma.js';
 
 export type EmployeeWithDepartment = Prisma.EmployeeGetPayload<{
@@ -387,5 +394,288 @@ export async function deleteEmployeeWithRelatedRecords(params: {
     await tx.employee.delete({
       where: { id: params.employeeId },
     });
+  });
+}
+
+export interface PromotionDocumentAttachment {
+  url: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+}
+
+export interface CreatePromotionParams {
+  employeeId: string;
+  previousPosition: string;
+  newPosition: string;
+  previousDepartmentId: string;
+  newDepartmentId: string;
+  effectiveDate: Date;
+  newFunctionalRate?: number | undefined;
+  remarks: string;
+  isApproved: boolean;
+  actorUserId: string;
+  actorUsername: string;
+  ipAddress?: string | undefined;
+  auditDetails: string;
+  document?: PromotionDocumentAttachment | undefined;
+}
+
+export async function listEmployeePromotions(employeeId: string) {
+  return prisma.employmentStatusChange.findMany({
+    where: {
+      employeeId,
+      changeType: EmploymentChangeType.PROMOTION,
+    },
+    include: {
+      employee: {
+        select: {
+          id: true,
+          employeeNumber: true,
+          firstName: true,
+          surname: true,
+          position: true,
+          department: { select: { id: true, name: true } },
+        },
+      },
+      previousDepartment: { select: { id: true, name: true } },
+      newDepartment: { select: { id: true, name: true } },
+      approvedBy: { select: { id: true, username: true } },
+      createdBy: { select: { id: true, username: true } },
+    },
+    orderBy: { effectiveDate: 'desc' },
+  });
+}
+
+export async function createPromotionRecord(params: CreatePromotionParams) {
+  return prisma.$transaction(async (tx) => {
+    // 1. Create employment status change record
+    const statusChange = await tx.employmentStatusChange.create({
+      data: {
+        employeeId: params.employeeId,
+        changeType: EmploymentChangeType.PROMOTION,
+        effectiveDate: params.effectiveDate,
+        previousPosition: params.previousPosition,
+        newPosition: params.newPosition,
+        previousDepartmentId: params.previousDepartmentId,
+        newDepartmentId: params.newDepartmentId,
+        remarks: params.remarks,
+        approvedById: params.isApproved ? params.actorUserId : null,
+        createdById: params.actorUserId,
+      },
+      include: {
+        previousDepartment: { select: { id: true, name: true } },
+        newDepartment: { select: { id: true, name: true } },
+        approvedBy: { select: { id: true, username: true } },
+        createdBy: { select: { id: true, username: true } },
+      },
+    });
+
+    // 2. If approved directly, update employee record
+    if (params.isApproved) {
+      const updateData: Prisma.EmployeeUpdateInput = {
+        position: params.newPosition,
+        department: { connect: { id: params.newDepartmentId } },
+      };
+      if (params.newFunctionalRate !== undefined && params.newFunctionalRate !== null) {
+        updateData.functionalRate = params.newFunctionalRate;
+      }
+      await tx.employee.update({
+        where: { id: params.employeeId },
+        data: updateData,
+      });
+    }
+
+    // 3. If supporting document uploaded, attach and update 201 checklist
+    if (params.document) {
+      const docType = await tx.documentType.findUnique({
+        where: {
+          categoryId_name: {
+            categoryId: 'administrative',
+            name: 'Promotion or Salary Adjustment Documents',
+          },
+        },
+      });
+
+      if (docType) {
+        await tx.employeeDocument.create({
+          data: {
+            employeeId: params.employeeId,
+            documentTypeId: docType.id,
+            filePath: params.document.url,
+            fileName: params.document.fileName,
+            fileSizeBytes: params.document.fileSize,
+            mimeType: params.document.mimeType,
+            uploadedById: params.actorUserId,
+          },
+        });
+
+        await tx.employeeDocumentChecklist.upsert({
+          where: {
+            employeeId_documentTypeId: {
+              employeeId: params.employeeId,
+              documentTypeId: docType.id,
+            },
+          },
+          update: {
+            isCompleted: true,
+            completedAt: new Date(),
+            completedById: params.actorUserId,
+          },
+          create: {
+            employeeId: params.employeeId,
+            documentTypeId: docType.id,
+            isCompleted: true,
+            completedAt: new Date(),
+            completedById: params.actorUserId,
+          },
+        });
+      }
+    }
+
+    // 4. Create audit log
+    await tx.auditLog.create({
+      data: {
+        userId: params.actorUserId,
+        username: params.actorUsername,
+        action: params.isApproved ? 'Promoted employee' : 'Submitted promotion recommendation',
+        entityType: 'Employee',
+        entityId: params.employeeId,
+        details: params.auditDetails,
+        ipAddress: params.ipAddress ?? null,
+      },
+    });
+
+    return statusChange;
+  });
+}
+
+export async function approvePromotionRecord(params: {
+  employeeId: string;
+  promotionId: string;
+  actorUserId: string;
+  actorUsername: string;
+  ipAddress?: string | undefined;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const promo = await tx.employmentStatusChange.findFirst({
+      where: {
+        id: params.promotionId,
+        employeeId: params.employeeId,
+        changeType: EmploymentChangeType.PROMOTION,
+      },
+      include: {
+        employee: true,
+      },
+    });
+
+    if (!promo) {
+      throw new Error('Promotion record not found');
+    }
+
+    if (promo.approvedById) {
+      throw new Error('Promotion record is already approved');
+    }
+
+    // 1. Mark promotion as approved
+    const updatedPromo = await tx.employmentStatusChange.update({
+      where: { id: promo.id },
+      data: {
+        approvedById: params.actorUserId,
+      },
+      include: {
+        previousDepartment: { select: { id: true, name: true } },
+        newDepartment: { select: { id: true, name: true } },
+        approvedBy: { select: { id: true, username: true } },
+        createdBy: { select: { id: true, username: true } },
+      },
+    });
+
+    // 2. Update employee's active position and department
+    const employeeUpdateData: Prisma.EmployeeUpdateInput = {};
+    if (promo.newPosition) {
+      employeeUpdateData.position = promo.newPosition;
+    }
+    if (promo.newDepartmentId) {
+      employeeUpdateData.department = { connect: { id: promo.newDepartmentId } };
+    }
+    // Check if remarks mention salary update
+    const salaryMatch = promo.remarks?.match(/(?:new salary|functional rate|rate):\s*(?:₱|PHP)?\s*([\d,]+(?:\.\d+)?)/i);
+    const matchVal = salaryMatch?.[1];
+    if (matchVal) {
+      const parsedRate = parseFloat(matchVal.replace(/,/g, ''));
+      if (!isNaN(parsedRate) && parsedRate > 0) {
+        employeeUpdateData.functionalRate = parsedRate;
+      }
+    }
+
+    if (Object.keys(employeeUpdateData).length > 0) {
+      await tx.employee.update({
+        where: { id: params.employeeId },
+        data: employeeUpdateData,
+      });
+    }
+
+    // 3. Create audit log
+    await tx.auditLog.create({
+      data: {
+        userId: params.actorUserId,
+        username: params.actorUsername,
+        action: 'Approved employee promotion',
+        entityType: 'Employee',
+        entityId: params.employeeId,
+        details: `${promo.employee.employeeNumber} — ${promo.employee.firstName} ${promo.employee.surname} promotion to ${promo.newPosition || 'New Role'} approved by ${params.actorUsername}.`,
+        ipAddress: params.ipAddress ?? null,
+      },
+    });
+
+    return updatedPromo;
+  });
+}
+
+export async function deletePendingPromotionRecord(params: {
+  employeeId: string;
+  promotionId: string;
+  actorUserId: string;
+  actorUsername: string;
+  ipAddress?: string | undefined;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const promo = await tx.employmentStatusChange.findFirst({
+      where: {
+        id: params.promotionId,
+        employeeId: params.employeeId,
+        changeType: EmploymentChangeType.PROMOTION,
+      },
+      include: {
+        employee: true,
+      },
+    });
+
+    if (!promo) {
+      throw new Error('Promotion record not found');
+    }
+
+    if (promo.approvedById) {
+      throw new Error('Cannot delete an already approved promotion');
+    }
+
+    await tx.employmentStatusChange.delete({
+      where: { id: promo.id },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        userId: params.actorUserId,
+        username: params.actorUsername,
+        action: 'Discarded promotion recommendation',
+        entityType: 'Employee',
+        entityId: params.employeeId,
+        details: `Promotion recommendation for ${promo.employee.employeeNumber} (${promo.employee.firstName} ${promo.employee.surname}) to ${promo.newPosition || 'New Role'} was discarded.`,
+        ipAddress: params.ipAddress ?? null,
+      },
+    });
+
+    return { id: promo.id, success: true };
   });
 }

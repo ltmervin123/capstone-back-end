@@ -6,6 +6,7 @@ import * as employeeService from '../services/employee.service.js';
 import * as documentExtractionService from '../services/documentExtraction.service.js';
 import {
   createEmployeeBodySchema,
+  createPromotionSchema,
   documentLabelsSchema,
   removedDocumentsSchema,
   updateEmployeeBodySchema,
@@ -247,6 +248,153 @@ export async function extractEmployeeDocument(
       success: true,
       data: extracted,
       message: 'Document analyzed and extracted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+function getParamString(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value ?? '';
+}
+
+export async function listEmployeePromotions(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    const employeeNumber = getParamString(req.params.employeeNumber);
+    if (!employeeNumber) {
+      throw new AppError(400, 'Employee number is required', 'VALIDATION_ERROR');
+    }
+
+    const promotions = await employeeService.getEmployeePromotions({
+      employeeNumber,
+      actorUserId: req.user.id,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: promotions,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function promoteEmployee(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    const employeeNumber = getParamString(req.params.employeeNumber);
+    if (!employeeNumber) {
+      throw new AppError(400, 'Employee number is required', 'VALIDATION_ERROR');
+    }
+
+    let bodyData = req.body;
+    if (req.body?.payload) {
+      try {
+        bodyData = JSON.parse(req.body.payload);
+      } catch {
+        // use req.body as is
+      }
+    }
+
+    const validatedInput = createPromotionSchema.parse(bodyData);
+    const documentFile = req.file;
+
+    const promotion = await employeeService.promoteEmployee({
+      employeeNumber,
+      actorUserId: req.user.id,
+      input: validatedInput,
+      ...(documentFile ? { documentFile } : {}),
+      ...(req.ip ? { ipAddress: req.ip } : {}),
+    });
+
+    res.status(201).json({
+      success: true,
+      data: promotion,
+      message: promotion.isApproved
+        ? 'Employee promoted successfully'
+        : 'Promotion recommendation submitted for review',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function approvePromotion(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    const employeeNumber = getParamString(req.params.employeeNumber);
+    const promotionId = getParamString(req.params.promotionId);
+    if (!employeeNumber || !promotionId) {
+      throw new AppError(400, 'Employee number and promotion ID are required', 'VALIDATION_ERROR');
+    }
+
+    const result = await employeeService.approvePromotion({
+      employeeNumber,
+      promotionId,
+      actorUserId: req.user.id,
+      ...(req.ip ? { ipAddress: req.ip } : {}),
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: 'Promotion approved successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function deletePendingPromotion(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    const employeeNumber = getParamString(req.params.employeeNumber);
+    const promotionId = getParamString(req.params.promotionId);
+    if (!employeeNumber || !promotionId) {
+      throw new AppError(400, 'Employee number and promotion ID are required', 'VALIDATION_ERROR');
+    }
+
+    const result = await employeeService.deletePendingPromotion({
+      employeeNumber,
+      promotionId,
+      actorUserId: req.user.id,
+      ...(req.ip ? { ipAddress: req.ip } : {}),
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: 'Promotion recommendation discarded successfully',
     });
   } catch (error) {
     next(error);

@@ -52,4 +52,37 @@ router.delete(
   employeeController.deleteEmployee,
 );
 
+// Promotion management endpoints
+router.get(
+  '/:employeeNumber/promotions',
+  authenticate,
+  requirePermission('employees'),
+  employeeController.listEmployeePromotions,
+);
+
+router.post(
+  '/:employeeNumber/promotions',
+  authenticate,
+  requireRoles(Role.ADMIN, Role.HR),
+  requirePermission('employees'),
+  pdfDocumentUpload,
+  employeeController.promoteEmployee,
+);
+
+router.patch(
+  '/:employeeNumber/promotions/:promotionId/approve',
+  authenticate,
+  requireRoles(Role.ADMIN),
+  requirePermission('employees'),
+  employeeController.approvePromotion,
+);
+
+router.delete(
+  '/:employeeNumber/promotions/:promotionId',
+  authenticate,
+  requireRoles(Role.ADMIN),
+  requirePermission('employees'),
+  employeeController.deletePendingPromotion,
+);
+
 export default router;
