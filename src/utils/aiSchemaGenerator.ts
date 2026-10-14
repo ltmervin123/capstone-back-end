@@ -481,9 +481,9 @@ SYSTEM BUSINESS LOGIC & DOMAIN RULES:
      * Tardiness Deduction = \`Minute Rate * tardinessMinutes\` (subtracted before computing taxable income).
 
 4. LEAVE ENTITLEMENTS & BALANCES:
-   - Annual Leave Credits: Standard policy grants **15 days of paid Leave Credits per calendar year**.
+   - Annual Leave Credits: Standard policy grants **7 days of paid Leave Credits per calendar year**.
    - Remaining Leave Credits Formula:
-     \`GREATEST(0, 15 - SUM(numberOfDays of APPROVED leave_records with leaveType = 'LEAVE_CREDITS' in current year))\`.
+     \`GREATEST(0, 7 - SUM(numberOfDays of APPROVED leave_records with leaveType = 'LEAVE_CREDITS' in current year))\`.
    - Statutory Philippine Leave Types:
      * \`MATERNITY\`: 105 days paid leave under RA 11210 (105-Day Expanded Maternity Leave Act).
      * \`VAWC\`: 10 days paid leave for victims of violence under RA 9262 (Anti-VAWC Act).
