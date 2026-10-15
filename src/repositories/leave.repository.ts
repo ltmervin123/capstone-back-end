@@ -49,10 +49,10 @@ export async function listEmployeeLeavesInYear(employeeId: string, year: number)
   return prisma.leaveRecord.findMany({
     where: {
       employeeId,
-      leaveType: 'LEAVE_CREDITS' as LeaveType,
       startDate: { gte: start, lt: end },
     },
     select: {
+      id: true,
       numberOfDays: true,
       status: true,
     },

@@ -6,7 +6,7 @@ import * as userRepository from '../repositories/user.repository.js';
 import * as payrollRepository from '../repositories/payroll.repository.js';
 import type { CreateLeaveInput } from '../validators/leave.validator.js';
 
-const ANNUAL_LEAVE_CREDIT_DAYS = 15;
+const ANNUAL_LEAVE_ALLOCATION_DAYS = 7;
 
 const LEAVE_TYPE_TO_DB: Record<CreateLeaveInput['type'], LeaveType> = {
   'Leave Credits': LeaveType.LEAVE_CREDITS,
@@ -74,13 +74,21 @@ function toFrontendLeave(record: Awaited<ReturnType<typeof leaveRepository.listL
   };
 }
 
-async function remainingLeaveCredits(employeeId: string, year: number): Promise<number> {
+async function remainingAnnualLeaveBalance(
+  employeeId: string,
+  year: number,
+  excludeLeaveId?: string,
+): Promise<number> {
   const records = await leaveRepository.listEmployeeLeavesInYear(employeeId, year);
   const usedDays = records
-    .filter((record) => record.status === LeaveStatus.APPROVED)
+    .filter(
+      (record) =>
+        record.id !== excludeLeaveId &&
+        record.status !== LeaveStatus.REJECTED,
+    )
     .reduce((sum, record) => sum + record.numberOfDays, 0);
 
-  return Math.max(0, ANNUAL_LEAVE_CREDIT_DAYS - usedDays);
+  return Math.max(0, ANNUAL_LEAVE_ALLOCATION_DAYS - usedDays);
 }
 
 export async function listLeaves(actorUserId: string) {
@@ -156,15 +164,16 @@ export async function createLeave(params: {
 
   const leaveType = LEAVE_TYPE_TO_DB[input.type];
 
-  if (leaveType === LeaveType.LEAVE_CREDITS) {
-    const remaining = await remainingLeaveCredits(employee.id, startDate.getUTCFullYear());
-    if (input.numberOfDays > remaining) {
-      throw new AppError(
-        400,
-        `Leave Limit Reached: You are requesting ${input.numberOfDays} day(s), but only have ${remaining} leave credit(s) remaining for this year.`,
-        'LEAVE_LIMIT_REACHED',
-      );
-    }
+  const remaining = await remainingAnnualLeaveBalance(
+    employee.id,
+    startDate.getUTCFullYear(),
+  );
+  if (input.numberOfDays > remaining) {
+    throw new AppError(
+      400,
+      `Leave Limit Reached: You are requesting ${input.numberOfDays} day(s), but only have ${remaining} day(s) remaining in your annual leave allocation.`,
+      'LEAVE_LIMIT_REACHED',
+    );
   }
 
   const created = await leaveRepository.createLeave({
@@ -306,18 +315,17 @@ export async function approveLeave(params: {
     );
   }
 
-  if (existing.leaveType === LeaveType.LEAVE_CREDITS) {
-    const remaining = await remainingLeaveCredits(
-      existing.employeeId,
-      existing.startDate.getUTCFullYear(),
+  const remaining = await remainingAnnualLeaveBalance(
+    existing.employeeId,
+    existing.startDate.getUTCFullYear(),
+    existing.id,
+  );
+  if (existing.numberOfDays > remaining) {
+    throw new AppError(
+      400,
+      `Leave Limit Reached: This request needs ${existing.numberOfDays} day(s), but only ${remaining} day(s) remain in the annual leave allocation.`,
+      'LEAVE_LIMIT_REACHED',
     );
-    if (existing.numberOfDays > remaining) {
-      throw new AppError(
-        400,
-        `Leave Limit Reached: This request needs ${existing.numberOfDays} day(s), but only ${remaining} leave credit(s) remain for this year.`,
-        'LEAVE_LIMIT_REACHED',
-      );
-    }
   }
 
   const lockedRun =
